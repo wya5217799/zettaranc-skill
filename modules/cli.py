@@ -14,20 +14,18 @@ import sys
 import os
 from typing import List, Optional
 
-# 加载环境变量
-from pathlib import Path
-from dotenv import load_dotenv
-_env_path = Path(__file__).parent.parent / ".env"
-load_dotenv(_env_path)
+# dotenv 加载已移至 modules/__init__.py（包级别一次性加载）
 
 
 def cmd_analyze(args):
     """分析单只股票"""
     from modules.indicators import analyze_stock
+    from modules.indicators.data_layer import get_kline_data, DailyData
     from modules.strategies import detect_all_strategies, StrategyType
     from modules.portfolio_diagnosis import diagnose_stock
 
     ts_code = args.ts_code
+    days = args.days
 
     print(f"\n{'='*60}")
     print(f"股票分析: {ts_code}")
@@ -35,7 +33,7 @@ def cmd_analyze(args):
 
     # 1. 指标分析
     print("\n【技术指标】")
-    result = analyze_stock(ts_code, days=args.days)
+    result = analyze_stock(ts_code, days=days)
     print(f"  日期: {result.trade_date}")
     print(f"  KDJ:  K={result.k:.2f}  D={result.d:.2f}  J={result.j:.2f}")
     print(f"  MACD: DIF={result.dif:.4f}  DEA={result.dea:.4f}  柱={result.macd_hist:.4f}")
@@ -44,46 +42,50 @@ def cmd_analyze(args):
     print(f"  RSI:  {result.rsi6:.2f}/{result.rsi12:.2f}/{result.rsi24:.2f}")
     print(f"  砖型图: {result.brick_trend}({result.brick_count}块)  值={result.brick_value:.2f}")
 
-    # 2. P2 指标：三波理论 + 麒麟会
+    # 2. P2 指标：三波理论 + 麒麟会（需要原始 K 线数据）
     print("\n【主力阶段】")
     try:
-        from modules.indicators import DailyData, detect_three_waves, detect_kirin_stage
-        daily_klines = []
-        for i, k in enumerate(klines):
-            prev_close = klines[i-1]['close'] if i > 0 else k['close']
-            daily_klines.append(DailyData(
-                ts_code=k['ts_code'],
-                trade_date=k['trade_date'],
-                open=k['open'],
-                high=k['high'],
-                low=k['low'],
-                close=k['close'],
-                vol=k['vol'],
-                amount=k.get('amount', k['close'] * k['vol']),
-                pct_chg=k.get('pct_chg', 0),
-                prev_close=prev_close,
-            ))
-        wave = detect_three_waves(daily_klines)
-        kirin = detect_kirin_stage(daily_klines)
+        from modules.indicators import detect_three_waves, detect_kirin_stage
+        klines = get_kline_data(ts_code, days=days)
+        if not klines:
+            print("  无 K 线数据，跳过主力阶段分析")
+        else:
+            daily_klines = []
+            for i, k in enumerate(klines):
+                prev_close = klines[i-1].close if i > 0 else k.close
+                daily_klines.append(DailyData(
+                    ts_code=k.ts_code,
+                    trade_date=k.trade_date,
+                    open=k.open,
+                    high=k.high,
+                    low=k.low,
+                    close=k.close,
+                    vol=k.vol,
+                    amount=k.amount,
+                    pct_chg=k.pct_chg,
+                    prev_close=prev_close,
+                ))
+            wave = detect_three_waves(daily_klines)
+            kirin = detect_kirin_stage(daily_klines)
 
-        print(f"  三波理论: {wave['wave']} (conf={wave['confidence']}) → {wave['b1_suggestion']}")
-        if wave['stats']:
-            s = wave['stats']
-            print(f"    低点→当前: {s['low_price']:.1f}→{s['high_price']:.1f} 涨幅{s['gain_pct']:.1f}%")
-            print(f"    涨停{s['limit_up_count']}次 阳线占比{s['red_ratio']*100:.0f}% 日均{s['avg_daily_gain']:.2f}%")
+            print(f"  三波理论: {wave['wave']} (conf={wave['confidence']}) → {wave['b1_suggestion']}")
+            if wave['stats']:
+                s = wave['stats']
+                print(f"    低点→当前: {s['low_price']:.1f}→{s['high_price']:.1f} 涨幅{s['gain_pct']:.1f}%")
+                print(f"    涨停{s['limit_up_count']}次 阳线占比{s['red_ratio']*100:.0f}% 日均{s['avg_daily_gain']:.2f}%")
 
-        print(f"  麒麟会: {kirin['stage']} (conf={kirin['confidence']}) → {kirin['operation']}")
-        if kirin['sub_type'] != '未知':
-            print(f"    子类型: {kirin['sub_type']}")
-        if kirin.get('scores'):
-            sc = kirin['scores']
-            print(f"    评分: 吸{sc['xishou']} 拉{sc['lasheng']} 派{sc['paifa']} 落{sc['luoluo']}")
+            print(f"  麒麟会: {kirin['stage']} (conf={kirin['confidence']}) → {kirin['operation']}")
+            if kirin['sub_type'] != '未知':
+                print(f"    子类型: {kirin['sub_type']}")
+            if kirin.get('scores'):
+                sc = kirin['scores']
+                print(f"    评分: 吸{sc['xishou']} 拉{sc['lasheng']} 派{sc['paifa']} 落{sc['luoluo']}")
     except Exception as e:
         print(f"  检测失败: {e}")
 
     # 3. 策略信号
     print("\n【战法信号】")
-    signals = detect_all_strategies(ts_code, days=args.days)
+    signals = detect_all_strategies(ts_code, days=days)
     if not signals:
         print("  无信号")
     else:
@@ -106,7 +108,7 @@ def cmd_analyze(args):
 
     # 4. 诊断
     print("\n【持仓诊断】")
-    diagnosis = diagnose_stock(ts_code, days=args.days)
+    diagnosis = diagnose_stock(ts_code, days=days)
     print(diagnosis)
 
 

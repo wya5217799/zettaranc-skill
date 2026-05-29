@@ -6,11 +6,8 @@
 import os
 from pathlib import Path
 from typing import Optional
-from dotenv import load_dotenv
 
-# 加载 .env
-_env_path = Path(__file__).parent.parent / ".env"
-load_dotenv(_env_path)
+# dotenv 加载已移至 modules/__init__.py（包级别一次性加载）
 
 # 数据模式别名
 MODE_JNB = "jnb"           # JNB 模式：走 Tushare API

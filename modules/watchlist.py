@@ -7,36 +7,19 @@ import os
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from pathlib import Path
-from dotenv import load_dotenv
 
-# 加载项目内的 .env
-_env_path = Path(__file__).parent.parent / ".env"
-load_dotenv(_env_path)
+# dotenv 加载已移至 modules/__init__.py（包级别一次性加载）
 
-# Import 兼容
-try:
-    from .database import (
-        add_watchlist_item, remove_watchlist_item,
-        get_watchlist, update_watchlist_item
-    )
-    from .indicators import analyze_stock, get_kline_data
-    from .strategies import (
-        detect_all_strategies, analyze_kirin_phase,
-        StrategyType, get_kline_data as get_strategy_klines
-    )
-    from .screener import analyze_stock as screener_analyze
-except ImportError:
-    from database import (
-        add_watchlist_item, remove_watchlist_item,
-        get_watchlist, update_watchlist_item
-    )
-    from indicators import analyze_stock, get_kline_data
-    from strategies import (
-        detect_all_strategies, analyze_kirin_phase,
-        StrategyType, get_kline_data as get_strategy_klines
-    )
-    from screener import analyze_stock as screener_analyze
+from .database import (
+    add_watchlist_item, remove_watchlist_item,
+    get_watchlist, update_watchlist_item
+)
+from .indicators import analyze_stock, get_kline_data
+from .strategies import (
+    detect_all_strategies, analyze_kirin_phase,
+    StrategyType, get_kline_data as get_strategy_klines
+)
+from .screener import analyze_stock as screener_analyze
 
 
 @dataclass

@@ -306,11 +306,11 @@ python scripts/merge_research.py .
 ### Python 模块规范
 
 - **数据库路径**：统一从 `os.getenv("DB_PATH", "data/stock_data.db")` 读取，支持相对路径和绝对路径
-- **环境变量加载**：每个需要 `.env` 的模块顶部统一使用 `load_dotenv(Path(__file__).parent.parent / ".env")`
+- **环境变量加载**：统一由 `modules/__init__.py` 在包首次 import 时一次性加载 `.env`，各子模块不再重复加载
 - **限流控制**：所有 Tushare API 调用必须带 `_rate_limit()`，控制 120 次/分钟
 - **事务管理**：数据库操作统一使用 `get_connection()` 上下文管理器（自动 commit/rollback）
 - **错误处理**：API 调用用 try/except 包裹，记录 error log，返回空 DataFrame/None 而非抛异常中断
-- **Import 兼容**：模块间导入同时支持包内相对导入和直接脚本运行（`try: from .xxx import ... except ImportError: from xxx import ...`）
+- **包安装**：使用 `pip install -e .` 安装后，可通过 `zt` 命令（console_scripts）或 `python -m modules.cli` 调用，无需再使用裸 `python modules/xxx.py` 方式
 
 ### 版本规则
 

@@ -77,8 +77,10 @@
 ```bash
 git clone https://github.com/lululu811/zettaranc-skill.git
 cd zettaranc-skill
-pip install -r requirements.txt
+pip install -e .
 ```
+
+> 安装完成后会注册 `zt` 命令（`zt analyze`、`zt screen`、`zt watchlist`、`zt diagnose`）。如不安装，也可直接 `python -m modules.cli` 调用。
 
 ### 2. 配置
 

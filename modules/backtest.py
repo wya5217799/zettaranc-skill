@@ -13,16 +13,14 @@
 import os
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional
-from pathlib import Path
-from dotenv import load_dotenv
 
-_env_path = Path(__file__).parent.parent / ".env"
-load_dotenv(_env_path)
+# dotenv 加载已移至 modules/__init__.py（包级别一次性加载）
+# try:
+#     from modules.strategies import detect_all_strategies, get_kline_data, Priority
+# except ImportError:
+#     from strategies import detect_all_strategies, get_kline_data, Priority
 
-try:
-    from modules.strategies import detect_all_strategies, get_kline_data, Priority
-except ImportError:
-    from strategies import detect_all_strategies, get_kline_data, Priority
+from modules.strategies import detect_all_strategies, get_kline_data, Priority
 
 
 @dataclass

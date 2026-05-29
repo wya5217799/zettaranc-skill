@@ -39,11 +39,9 @@ class StockInfo:
 
 
 from contextlib import contextmanager
-from dotenv import load_dotenv
 
-# 加载项目内的 .env
-_env_path = Path(__file__).parent.parent / ".env"
-load_dotenv(_env_path)
+# 模块首次 import 时由 modules/__init__.py 统一加载 .env，
+# 此处不再重复加载（保留仅为兼容独立脚本运行 `python modules/database.py`）
 
 # 数据库路径：从环境变量读取，支持相对路径和绝对路径
 _db_path_str = os.getenv("DB_PATH", "data/stock_data.db")

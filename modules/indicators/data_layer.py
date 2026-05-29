@@ -5,8 +5,6 @@
 import os
 import sqlite3
 from typing import List, Dict, Any, Optional, Tuple
-from pathlib import Path
-from dotenv import load_dotenv
 
 try:
     from .core import (
@@ -31,31 +29,14 @@ try:
         detect_volume_anomaly, calculate_sell_score, detect_trade_signal,
     )
 except ImportError:
-    from core import (
-        DB_PATH, get_db_connection,
-        DailyData, TradeSignal, IndicatorResult,
-        calculate_ma, calculate_ema, calculate_kdj, calculate_bbi,
-        calculate_rsi_multi, calculate_wr_multi, calculate_bollinger,
-        calculate_vol_ratio, calculate_macd, get_data_mode,
-    )
-    from price_patterns import (
-        calculate_zg_white, calculate_dg_yellow, detect_double_line_cross,
-        detect_needle_20, detect_needle_30,
-        calculate_brick_value, calculate_brick_history, detect_brick_trend, detect_fanbao,
-        detect_b1_today, detect_b2_today, detect_key_k, detect_violence_k,
-        check_two_30_rule, detect_nana_chart, detect_golden_bowl,
-        detect_breathing_structure, detect_sb1, detect_sb1_detailed,
-        detect_b3, detect_double_gun, detect_four_brick_system,
-        detect_volume_pattern,
-        detect_macd_signals, calculate_dmi,
-    )
-    from volume_patterns import (
-        detect_volume_anomaly, calculate_sell_score, detect_trade_signal,
+    # 已废弃：仅在直接运行 `python modules/indicators/data_layer.py` 时生效
+    # 安装包后（pip install -e .）统一走相对导入，此分支不再需要
+    raise ImportError(
+        "请使用 'pip install -e .' 安装包后通过 'zt' 命令调用，"
+        "或通过 'python -m modules.indicators.data_layer' 运行"
     )
 
-# 加载项目内的 .env（fallback）
-_env_path = Path(__file__).parent.parent.parent / ".env"
-load_dotenv(_env_path)
+# dotenv 加载已移至 modules/__init__.py（包级别一次性加载）
 
 # 指标缓存层（内存 + SQLite）
 _indicator_memory_cache: Dict[Tuple[str, str], IndicatorResult] = {}

@@ -9,18 +9,15 @@ import os
 import time
 import logging
 from typing import Optional, List
-from pathlib import Path
 
 try:
     import requests
     import pandas as pd
     import tushare as ts
-    from dotenv import load_dotenv
 except ImportError:
     print("请先安装依赖: pip install requests pandas python-dotenv tushare")
 
-_env_path = Path(__file__).parent.parent / ".env"
-load_dotenv(_env_path, override=True)
+# dotenv 加载已移至 modules/__init__.py（包级别一次性加载，override=True）
 
 logger = logging.getLogger(__name__)
 

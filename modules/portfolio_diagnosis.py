@@ -13,32 +13,17 @@
 import os
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass, field
-from pathlib import Path
-from dotenv import load_dotenv
 
-# 加载项目内的 .env
-_env_path = Path(__file__).parent.parent / ".env"
-load_dotenv(_env_path)
+# dotenv 加载已移至 modules/__init__.py（包级别一次性加载）
 
-# Import 兼容：支持包内相对导入和直接脚本运行
-try:
-    from .indicators import (
-        analyze_stock, get_kline_data,
-        calculate_sell_score, IndicatorResult, DailyData
-    )
-    from .strategies import (
-        detect_all_strategies, analyze_kirin_phase,
-        StrategyType, StrategySignal
-    )
-except ImportError:
-    from indicators import (
-        analyze_stock, get_kline_data,
-        calculate_sell_score, IndicatorResult, DailyData
-    )
-    from strategies import (
-        detect_all_strategies, analyze_kirin_phase,
-        StrategyType, StrategySignal
-    )
+from .indicators import (
+    analyze_stock, get_kline_data,
+    calculate_sell_score, IndicatorResult, DailyData
+)
+from .strategies import (
+    detect_all_strategies, analyze_kirin_phase,
+    StrategyType, StrategySignal
+)
 
 
 @dataclass

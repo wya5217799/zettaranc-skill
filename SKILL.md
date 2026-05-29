@@ -20,8 +20,8 @@ description: |
 在第一条用户消息后，执行以下步骤（通过 Bash 工具静默检测，不打断用户）：
 
 ```bash
-# 检查 DATA_MODE 环境变量
-python -c "import os; from dotenv import load_dotenv; from pathlib import Path; load_dotenv(Path('F:/001_AI/skills/zettaranc-skill/.env')); print(os.environ.get('DATA_MODE', ''))"
+# 检查 DATA_MODE 环境变量（跨平台兼容：自动查找项目根目录 .env）
+python -c "import os, sys; sys.path.insert(0, '.'); from pathlib import Path; from dotenv import load_dotenv; load_dotenv(Path('.env')); print(os.environ.get('DATA_MODE', ''))"
 ```
 
 **判断逻辑**：

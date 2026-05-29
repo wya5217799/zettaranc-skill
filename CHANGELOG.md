@@ -2,7 +2,29 @@
 
 所有值得记录的变更都会写在这里。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)。
 
-## [v2.4-fix] - 2026-05-29
+## [v2.5.0] - 2026-05-29
+
+> **「工程化补完：打包、架构清理、Bug修复。」**
+
+### 工程架构
+
+- **新增 `pyproject.toml`**：定义 `pip install -e .` 可安装为本地包，版本 2.4.0，Python >= 3.10
+- **新增 `zt` 命令**：`console_scripts` 入口，安装后直接用 `zt analyze 600487.SH`，无需 `python -m modules.cli`
+- **统一 dotenv 加载**：所有模块的 `.env` 重复加载改为 `modules/__init__.py` 包级别一次性加载（`override=True` 保留原始行为），17 处重复加载全部移除
+- **移除 try/except 兼容分支**：`data_layer.py`、`backtest.py`、`watchlist.py`、`portfolio_diagnosis.py`、`data_sync.py` 五个文件的裸模块导入兼容代码全部删除
+- **补漏 `requirements.txt`**：补加 `pandas>=2.0.0` 和 `requests>=2.28.0`（实际使用但未列入）
+- **更新 `AGENTS.md`**：Python 模块规范章节更新，说明包安装方式和 dotenv 统一加载策略
+
+### Bug 修复
+
+- **`SKILL.md` 硬编码路径**：`F:/001_AI/skills/zettaranc-skill/.env` 改为跨平台相对路径 `.env`
+- **`cli.py cmd_analyze` 运行时崩溃**：`klines` 变量未定义（`analyze_stock` 返回 `IndicatorResult` 而非 klines 列表），修复为单独调 `get_kline_data`，同时将 `args.days` 统一为 `days` 局部变量
+
+### 测试
+
+- 全部测试通过：261 passed, 1 skipped, 0 failures（0.92s）
+
+
 
 > **「从修复到补完，从单点到体系。」**
 

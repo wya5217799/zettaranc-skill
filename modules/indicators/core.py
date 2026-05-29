@@ -9,11 +9,8 @@ from datetime import datetime, timedelta
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from dotenv import load_dotenv
 
-# 加载项目内的 .env
-_env_path = Path(__file__).parent.parent.parent / ".env"
-load_dotenv(_env_path)
+# dotenv 加载已移至 modules/__init__.py（包级别一次性加载，override=True）
 
 # 数据库路径：从环境变量读取，支持相对路径和绝对路径
 _db_path_str = os.getenv("DB_PATH", "data/stock_data.db")

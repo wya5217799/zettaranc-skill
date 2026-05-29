@@ -13,20 +13,13 @@ from pathlib import Path
 
 try:
     import tushare as ts
-    from dotenv import load_dotenv
 except ImportError:
-    print("请先安装依赖: pip install tushare python-dotenv")
+    print("请先安装依赖: pip install tushare")
 
-# 加载项目内的 .env
-_env_path = Path(__file__).parent.parent / ".env"
-load_dotenv(_env_path)
+# dotenv 加载已移至 modules/__init__.py（包级别一次性加载，override=True）
 
-try:
-    from .database import get_connection, get_db_path
-    from .tushare_client import TushareClient
-except ImportError:
-    from database import get_connection, get_db_path
-    from tushare_client import TushareClient
+from .database import get_connection, get_db_path
+from .tushare_client import TushareClient
 
 logger = logging.getLogger(__name__)
 
