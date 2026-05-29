@@ -54,7 +54,7 @@ class MarketStatus:
     reasons: List[str] = field(default_factory=list)
 
 
-def get_db_connection():
+def get_db_connection() -> sqlite3.Connection:
     """获取数据库连接"""
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row

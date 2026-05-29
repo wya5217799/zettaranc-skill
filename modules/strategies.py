@@ -116,7 +116,7 @@ class StrategySignal:
     priority: Priority = Priority.OBSERVE
 
 
-def get_db_connection():
+def get_db_connection() -> sqlite3.Connection:
     """获取数据库连接"""
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
@@ -1355,7 +1355,7 @@ def _calc_dif(klines: List[Dict]) -> List[float]:
 
     closes = [k['close'] for k in klines]
 
-    def ema(data, period):
+    def ema(data: List[float], period: int) -> List[float]:
         multiplier = 2 / (period + 1)
         result = [data[0]]
         for price in data[1:]:

@@ -258,7 +258,7 @@ class Position:
     current_value: float = 0.0
     high_since_entry: float = 0.0
 
-    def update_price(self, price: float):
+    def update_price(self, price: float) -> None:
         """更新当前价格"""
         self.current_price = price
         self.current_value = self.shares * price

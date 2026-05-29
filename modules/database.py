@@ -6,8 +6,9 @@
 import os
 import sqlite3
 from pathlib import Path
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Generator
 from dataclasses import dataclass
+from contextlib import contextmanager
 
 
 @dataclass
@@ -58,7 +59,7 @@ def get_db_path() -> Path:
 
 
 @contextmanager
-def get_connection():
+def get_connection() -> Generator[sqlite3.Connection, None, None]:
     """获取数据库连接的上下文管理器"""
     conn = sqlite3.connect(get_db_path())
     conn.row_factory = sqlite3.Row
@@ -72,7 +73,7 @@ def get_connection():
         conn.close()
 
 
-def init_database():
+def init_database() -> None:
     """初始化数据库，创建所有表"""
     with get_connection() as conn:
         cursor = conn.cursor()
@@ -592,7 +593,7 @@ def get_trade_summary(ts_code: str = None, start_date: str = None, end_date: str
         return result
 
 
-def drop_all_tables():
+def drop_all_tables() -> None:
     """删除所有表（慎用，仅用于测试）"""
     with get_connection() as conn:
         cursor = conn.cursor()

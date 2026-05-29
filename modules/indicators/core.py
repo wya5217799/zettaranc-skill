@@ -237,7 +237,7 @@ class IndicatorResult:
     # 市场背景
     market_pct_chg: float = 0
     market_dir: str = "NEUTRAL"
-def get_db_connection():
+def get_db_connection() -> sqlite3.Connection:
     """获取数据库连接"""
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
