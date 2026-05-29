@@ -11,7 +11,7 @@ from .core import (
     calculate_ma, calculate_ema, calculate_sma_td, calculate_slope,
     calculate_kdj, precompute_kdj_sequence, precompute_bbi_sequence,
     precompute_macd_sequence, calculate_macd,
-    calculate_bbi, calculate_rsi, calculate_rsi_multi,
+    calculate_bbi, calculate_rsi, calculate_rsi_multi, detect_macd_trap,
     calculate_wr, calculate_wr_multi, calculate_bollinger, calculate_vol_ratio,
 )
 
@@ -21,7 +21,8 @@ from .price_patterns import (
     detect_double_gun, detect_sb1_detailed,
     calculate_dmi,
     calculate_brick_value, calculate_brick_history, detect_brick_trend, detect_fanbao,
-    detect_volume_pattern,
+    detect_volume_pattern, detect_didi, calculate_zuchong_target,
+    detect_zaihou_chongjian, detect_yueyueyushi, detect_key_candle,
     detect_b1_today, detect_b2_today,
     detect_key_k, detect_violence_k,
     check_two_30_rule,
@@ -31,9 +32,12 @@ from .price_patterns import (
 )
 
 from .volume_patterns import (
-    detect_volume_anomaly,
+    detect_volume_anomaly, detect_chuhuo_wushi,
     calculate_sell_score, detect_trade_signal,
 )
+
+from .wave_theory import detect_three_waves, classify_wave_for_b1
+from .kirin_detector import detect_kirin_stage
 
 from .data_layer import (
     _indicator_memory_cache,
@@ -70,7 +74,14 @@ __all__ = [
     "check_two_30_rule",
     "detect_nana_chart", "detect_golden_bowl", "detect_breathing_structure",
     "detect_sb1", "detect_b3", "detect_four_brick_system",
-    "detect_divergence", "detect_macd_signals",
+    "detect_divergence", "detect_macd_signals", "detect_macd_trap",
+    "detect_didi", "calculate_zuchong_target",
+    "detect_zaihou_chongjian", "detect_yueyueyushi", "detect_key_candle",
+    "detect_chuhuo_wushi",
+    # wave theory
+    "detect_three_waves", "classify_wave_for_b1",
+    # kirin detector
+    "detect_kirin_stage",
     # volume patterns
     "calculate_sell_score", "detect_trade_signal",
     # data layer

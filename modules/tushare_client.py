@@ -69,10 +69,16 @@ class TushareClient:
         self.last_request_time = time.time()
 
     def get_daily(self, ts_code: str, start_date: str, end_date: str) -> Optional[pd.DataFrame]:
-        """获取日线行情（个股）"""
+        """获取日线行情（个股，前复权）"""
         self._rate_limit()
         try:
-            return self._pro.daily(ts_code=ts_code, start_date=start_date, end_date=end_date)
+            return ts.pro_bar(
+                ts_code=ts_code,
+                start_date=start_date,
+                end_date=end_date,
+                adj='qfq',
+                api=self._pro,
+            )
         except Exception as e:
             logger.error(f"get_daily 失败: {e}")
             return pd.DataFrame()

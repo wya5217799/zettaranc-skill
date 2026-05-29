@@ -7,14 +7,14 @@ from typing import List, Dict, Any, Optional, Tuple
 try:
     from .core import (
         DailyData, TradeSignal, IndicatorResult,
-        calculate_ma, calculate_ema, calculate_sma_td, calculate_slope,
+        calculate_ma, calculate_ema, calculate_sma_td, calculate_sma_series, calculate_slope,
         calculate_kdj, calculate_bbi, calculate_rsi_multi, calculate_wr_multi,
         calculate_bollinger, calculate_vol_ratio,
     )
 except ImportError:
     from core import (
         DailyData, TradeSignal, IndicatorResult,
-        calculate_ma, calculate_ema, calculate_sma_td, calculate_slope,
+        calculate_ma, calculate_ema, calculate_sma_td, calculate_sma_series, calculate_slope,
         calculate_kdj, calculate_bbi, calculate_rsi_multi, calculate_wr_multi,
         calculate_bollinger, calculate_vol_ratio,
     )
@@ -564,23 +564,15 @@ def calculate_brick_value(klines: List[DailyData]) -> float:
     if len(var3a_list) < 6:
         return 0
 
-    # VAR4A = SMA(VAR3A, 6, 1)
-    var4a = calculate_sma_td(var3a_list[-6:], 6, 1)
-
-    # 构建 VAR4A 历史序列来算 SMA
-    var4a_list = []
-    for i in range(5, len(var3a_list) + 1):
-        sub = var3a_list[max(0, i-6):i]
-        if len(sub) >= 6:
-            v4 = calculate_sma_td(sub, 6, 1)
-            var4a_list.append(v4)
+    # VAR4A = SMA(VAR3A, 6, 1) —— 递推序列，每个点承接前一个结果
+    var4a_list = calculate_sma_series(var3a_list, 6, 1)
 
     if len(var4a_list) < 6:
-        # 数据不足，用已有数据近似
-        var5a = var4a + 100
-    else:
-        # VAR5A = SMA(VAR4A, 6, 1) + 100
-        var5a = calculate_sma_td(var4a_list[-6:], 6, 1) + 100
+        return 0
+
+    # VAR5A = SMA(VAR4A, 6, 1) + 100 —— 递推序列
+    var5a_list = calculate_sma_series(var4a_list, 6, 1)
+    var5a = var5a_list[-1] + 100
 
     # 构建 VAR1A 序列
     var1a_list = []
@@ -596,8 +588,9 @@ def calculate_brick_value(klines: List[DailyData]) -> float:
     if len(var1a_list) < 4:
         var2a = (var1a_list[-1] if var1a_list else -90) + 100
     else:
-        # VAR2A = SMA(VAR1A, 4, 1) + 100
-        var2a = calculate_sma_td(var1a_list[-4:], 4, 1) + 100
+        # VAR2A = SMA(VAR1A, 4, 1) + 100 —— 递推序列
+        var2a_list = calculate_sma_series(var1a_list, 4, 1)
+        var2a = var2a_list[-1] + 100
 
     # VAR6A = VAR5A - VAR2A
     var6a = var5a - var2a
@@ -763,6 +756,105 @@ def detect_volume_pattern(today: DailyData, yesterday: Optional[DailyData] = Non
         result['is_fangliang_yinxian'] = True
 
     return result
+
+def detect_didi(klines: List[DailyData]) -> Dict:
+    """
+    滴滴战法检测（高位连续两根阴线下台阶）
+
+    来源：Z哥交易体系 3.11 / trading-core.md
+    定义：高位连续两根阴线，第二根收盘价 < 第一根最低价，量未明显萎缩。
+    性质：最高优先级卖出信号，绕过防卖飞直接清仓。
+
+    条件：
+    1. 第一根阴线（收盘价 < 开盘价）
+    2. 第二根阴线（收盘价 < 开盘价）
+    3. 第二根收盘价 < 第一根最低价（下台阶）
+    4. 第二根成交量 >= 第一根成交量 × 0.8（量没明显缩）
+    5. 当前处于相对高位（收盘价 >= 近期20天最高价的 80%）
+
+    Args:
+        klines: K线数据（至少2根）
+
+    Returns:
+        {'is_didi': bool, 'first_low': float, 'second_close': float, 'volume_ratio': float}
+    """
+    if len(klines) < 2:
+        return {'is_didi': False}
+
+    today = klines[-1]
+    yesterday = klines[-2]
+
+    # 两根都是阴线（严格：收盘价 < 开盘价）
+    is_yin_1 = yesterday.close < yesterday.open
+    is_yin_2 = today.close < today.open
+
+    # 下台阶：第二根收盘 < 第一根最低
+    is_down_step = today.close < yesterday.low
+
+    # 量未明显萎缩（今天量 >= 昨天量 × 0.8）
+    is_volume_ok = today.vol >= yesterday.vol * 0.8 if yesterday.vol > 0 else False
+
+    # 高位判断（当前 >= 近20天最高价的 80%）
+    recent = klines[-20:] if len(klines) >= 20 else klines
+    recent_high = max(k.high for k in recent)
+    is_high = today.close >= recent_high * 0.8
+
+    if is_yin_1 and is_yin_2 and is_down_step and is_volume_ok and is_high:
+        return {
+            'is_didi': True,
+            'first_low': round(yesterday.low, 2),
+            'second_close': round(today.close, 2),
+            'volume_ratio': round(today.vol / yesterday.vol, 2) if yesterday.vol > 0 else 0,
+            'recent_high': round(recent_high, 2)
+        }
+
+    return {'is_didi': False}
+
+
+def calculate_zuchong_target(klines: List[DailyData], lookback: int = 60) -> Dict:
+    """
+    祖冲之法 —— 主力目标价计算
+
+    来源：advanced-patterns.md「坑里起好货」
+    核心逻辑：填坑意味着解放前期套牢盘，主力要拉到足够高度才有利润。
+    公式：目标价 = 2a - b
+      a = 近期高点（填坑前的高点）
+      b = 近期低点（坑底）
+
+    应用：
+    - 填大坑过程中遇到 BBI 下 2 根 K 线可以扛一会儿
+    - 填小坑到达目标价位及时卤煮（止盈）
+
+    Args:
+        klines: K线数据
+        lookback: 回望天数（默认60天）
+
+    Returns:
+        {'target': float, 'a': float, 'b': float, 'current': float, 'upside_pct': float}
+    """
+    if len(klines) < 10:
+        return {'target': 0, 'a': 0, 'b': 0, 'current': 0, 'upside_pct': 0}
+
+    recent = klines[-lookback:] if len(klines) >= lookback else klines
+
+    highs = [k.high for k in recent]
+    lows = [k.low for k in recent]
+
+    a = max(highs)   # 近期高点
+    b = min(lows)    # 近期低点
+    current = klines[-1].close
+
+    target = 2 * a - b
+    upside_pct = (target - current) / current * 100 if current > 0 else 0
+
+    return {
+        'target': round(target, 2),
+        'a': round(a, 2),
+        'b': round(b, 2),
+        'current': round(current, 2),
+        'upside_pct': round(upside_pct, 1)
+    }
+
 def detect_b1_today(klines: List[DailyData]) -> Dict:
     """
     B1建仓波检测（只检查最新这天）
@@ -1221,4 +1313,215 @@ def detect_four_brick_system(klines: List[DailyData]) -> Dict:
 
     result['brick_action'] = '观望'
     result['brick_action_desc'] = '中性'
+    return result
+
+
+# ========== P1 指标：灾后重建 / 跃跃欲试 / 关键K ==========
+
+def detect_zaihou_chongjian(klines: List[DailyData]) -> Dict:
+    """
+    灾后重建检测 —— 放量金叉后缩量回踩黄线
+
+    来源：advanced-patterns.md
+    定义：放量金叉后缩量回踩黄线，交易价值最大，是最后拉升前的震仓动作。
+
+    条件：
+    1. 前期有放量上涨（涨幅 > 5%，量 > 前5日均量 × 1.5）
+    2. 近期缩量回调（量 < 放量日量的 60%）
+    3. 价格回踩黄线（大哥线 / 4参数BBI变体）附近（±2%）
+    4. 黄线趋势向上
+
+    Args:
+        klines: K线数据（至少60根）
+
+    Returns:
+        {'is_rebuild': bool, 'confidence': float, 'desc': str}
+    """
+    if len(klines) < 60:
+        return {'is_rebuild': False}
+
+    today = klines[-1]
+
+    # 计算黄线（4参数BBI变体）
+    closes = [k.close for k in klines]
+    ma3 = calculate_ma(closes, 3)
+    ma6 = calculate_ma(closes, 6)
+    ma12 = calculate_ma(closes, 12)
+    ma24 = calculate_ma(closes, 24)
+    yellow_line = (ma3 + ma6 + ma12 + ma24) / 4
+
+    # 黄线趋势：近5天黄线 vs 近10天黄线
+    yellow_5 = (calculate_ma(closes[-5:], 3) + calculate_ma(closes[-5:], 6) +
+                calculate_ma(closes[-5:], 12) + calculate_ma(closes[-5:], 24)) / 4
+    yellow_10 = (calculate_ma(closes[-10:], 3) + calculate_ma(closes[-10:], 6) +
+                 calculate_ma(closes[-10:], 12) + calculate_ma(closes[-10:], 24)) / 4
+    yellow_up = yellow_5 > yellow_10
+
+    # 查找近期放量上涨日（近15天内）
+    recent_15 = klines[-15:]
+    fangliang_day = None
+    for i, k in enumerate(recent_15):
+        if i == 0:
+            continue
+        prev_5_avg = sum(kl.vol for kl in recent_15[max(0, i-5):i]) / 5
+        if k.pct_chg > 5 and k.vol > prev_5_avg * 1.5:
+            fangliang_day = k
+            break
+
+    if fangliang_day is None:
+        return {'is_rebuild': False}
+
+    # 缩量条件：今天量 < 放量日量的 60%
+    is_suoliang = today.vol < fangliang_day.vol * 0.6
+
+    # 回踩黄线：收盘价在黄线 ±2% 范围内
+    near_yellow = abs(today.close - yellow_line) / yellow_line < 0.02 if yellow_line > 0 else False
+
+    if is_suoliang and near_yellow and yellow_up:
+        return {
+            'is_rebuild': True,
+            'confidence': 0.85,
+            'yellow_line': round(yellow_line, 2),
+            'fangliang_price': round(fangliang_day.close, 2),
+            'desc': f'灾后重建：放量({fangliang_day.close:.2f})后缩量回踩黄线({yellow_line:.2f})'
+        }
+
+    return {'is_rebuild': False}
+
+
+def detect_yueyueyushi(klines: List[DailyData]) -> Dict:
+    """
+    跃跃欲试检测 —— 横盘期间放巨大量三次
+
+    来源：advanced-patterns.md
+    定义：横盘期间放巨大量，红长绿短、红肥绿瘦，出现至少三次后越往后突破概率越大。
+    前提：仅限牛市、未出货的赛赛图。"横有多长竖有多高"。
+
+    条件：
+    1. 近20天振幅 < 15%（横盘）
+    2. 近20天出现至少3次巨量（量 > 前10日均量 × 2）
+    3. 巨量日多为阳线（红肥绿瘦）
+    4. 当前未处于明显高位（距20日高点 < 10% 可接受）
+
+    Args:
+        klines: K线数据（至少30根）
+
+    Returns:
+        {'is_ready': bool, 'count': int, 'confidence': float, 'desc': str}
+    """
+    if len(klines) < 30:
+        return {'is_ready': False}
+
+    recent_20 = klines[-20:]
+    high_20 = max(k.high for k in recent_20)
+    low_20 = min(k.low for k in recent_20)
+    amplitude = (high_20 - low_20) / low_20 if low_20 > 0 else 0
+
+    # 横盘条件
+    if amplitude > 0.15:
+        return {'is_ready': False}
+
+    # 计算近10日均量
+    vols_10 = [k.vol for k in klines[-10:]]
+    avg_vol_10 = sum(vols_10) / len(vols_10)
+
+    # 统计巨量次数（量 > 前10日均量 × 2）
+    juliang_count = 0
+    yang_count = 0
+    for k in recent_20:
+        if k.vol > avg_vol_10 * 2:
+            juliang_count += 1
+            if k.close > k.open:
+                yang_count += 1
+
+    # 至少3次巨量，且阳线占比 > 50%
+    if juliang_count >= 3 and yang_count / juliang_count > 0.5:
+        confidence = 0.70 + 0.05 * min(juliang_count - 3, 3)  # 每多一次+5%，上限85%
+        return {
+            'is_ready': True,
+            'count': juliang_count,
+            'yang_ratio': round(yang_count / juliang_count, 2),
+            'confidence': round(confidence, 2),
+            'desc': f'跃跃欲试：横盘振幅{amplitude*100:.0f}%，{juliang_count}次巨量，阳线占比{yang_count/juliang_count*100:.0f}%'
+        }
+
+    return {'is_ready': False}
+
+
+def detect_key_candle(klines: List[DailyData]) -> Dict:
+    """
+    关键 K 检测 —— 走势中管理其他 K 线的关键位置放量长中阳/阴
+
+    来源：key-candles.md
+    核心价值：
+    1. 判断趋势反转（80分含金量）：下跌→上涨、横盘→上涨等
+    2. 判断走势衰竭（20分含金量）：卖盘枯竭/买盘枯竭
+
+    关键K条件：
+    1. 关键位置（突破前高、跌破前低、平台边缘）
+    2. 放量（量 > 前10日均量 × 1.5）
+    3. 实体够大（|收-开| / (高-低) > 0.6）
+    4. 阳线 close > open，阴线 close < open
+
+    返回最近一根关键K的信息和趋势转换判断。
+
+    Args:
+        klines: K线数据（至少20根）
+
+    Returns:
+        {'is_key': bool, 'direction': str, 'type': str, 'confidence': float}
+    """
+    if len(klines) < 20:
+        return {'is_key': False}
+
+    today = klines[-1]
+    recent_10 = klines[-10:]
+    recent_20 = klines[-20:]
+
+    # 实体比例
+    body = abs(today.close - today.open)
+    range_ = today.high - today.low
+    body_ratio = body / range_ if range_ > 0 else 0
+
+    # 放量
+    avg_vol_10 = sum(k.vol for k in recent_10) / len(recent_10)
+    is_fangliang = today.vol > avg_vol_10 * 1.5
+
+    # 实体够大
+    is_big_body = body_ratio > 0.6
+
+    if not is_fangliang or not is_big_body:
+        return {'is_key': False}
+
+    # 判断关键位置
+    high_20 = max(k.high for k in recent_20[:-1])  # 排除今天
+    low_20 = min(k.low for k in recent_20[:-1])
+    is_break_high = today.high > high_20 * 1.01  # 突破前高1%
+    is_break_low = today.low < low_20 * 0.99   # 跌破前低1%
+
+    # 判断方向
+    is_yang = today.close > today.open
+    is_yin = today.close < today.open
+
+    result = {'is_key': True, 'body_ratio': round(body_ratio, 2)}
+
+    if is_yang and is_break_high:
+        result['direction'] = '向上突破'
+        result['type'] = '关键阳突破'
+        result['confidence'] = 0.90
+    elif is_yin and is_break_low:
+        result['direction'] = '向下破位'
+        result['type'] = '关键阴破位'
+        result['confidence'] = 0.90
+    elif is_yang:
+        result['direction'] = '底部/回调阳'
+        result['type'] = '关键阳'
+        result['confidence'] = 0.75
+    elif is_yin:
+        result['direction'] = '顶部/滞涨阴'
+        result['type'] = '关键阴'
+        result['confidence'] = 0.75
+    else:
+        return {'is_key': False}
+
     return result

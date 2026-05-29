@@ -6,7 +6,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-Skill-blueviolet)](https://claude.ai/code)
-[![v2.4.0](https://img.shields.io/badge/version-2.4.0-red)](CHANGELOG.md)
+[![v2.4-fix](https://img.shields.io/badge/version-2.4--fix-red)](CHANGELOG.md)
 
 <br>
 
@@ -52,6 +52,10 @@
 - ✅ 长安战法 / 平行重炮 / 坑里起好货 / 对称 VA
 - ✅ 四分之三阴量 / 娜娜图形 / 异动地量
 - ✅ S1/S2/S3 逃顶体系
+- ✅ 滴滴战法 / MACD 金叉空·死叉多 / 祖冲之法（目标价）
+- ✅ 主力出货五式 / 灾后重建 / 跃跃欲试 / 关键 K 识别
+- ✅ 三波理论（建仓波/拉升波/冲刺波）
+- ✅ 麒麟会四阶段（吸筹/拉升/派发/回落）
 
 **分析工具**
 - ✅ 持股诊断（当前状态 + 防卖飞评分 + 出货信号扫描）
@@ -109,7 +113,7 @@ python -m modules.data_sync sync --ts_code 600487.SH --days 120
 ### 4. 验证
 
 ```bash
-# 运行测试（213 passed, 1 skipped）
+# 运行测试（261 passed, 1 skipped）
 python -m pytest tests/ -v
 
 # 分析一只股票
@@ -167,6 +171,11 @@ python -m modules.cli screener --max-stocks 0
 
 # 指定策略
 python -m modules.cli screener --strategy b1
+
+# P2 指标选股（v2.4-fix 新增）
+python -m modules.cli screen --strategy 建仓波 --limit 20
+python -m modules.cli screen --strategy 吸筹 --limit 20
+python -m modules.cli screen --strategy 安全 --limit 20
 ```
 
 ### 观察池
@@ -292,10 +301,12 @@ zettaranc-skill/
 │   ├── tushare_client.py       # Tushare API 封装
 │   ├── database.py             # SQLite 管理（8张表 + 事务上下文）
 │   ├── data_sync.py            # 数据同步（增量/全量，限流120次/分）
-│   ├── indicators/             # 技术指标引擎（60+指标，4子模块）
+│   ├── indicators/             # 技术指标引擎（60+指标，6子模块）
 │   │   ├── core.py             # 基础类型 + 数学工具 + 核心指标
-│   │   ├── price_patterns.py   # 价格形态（双线/单针/砖型图/B1B2B3）
-│   │   ├── volume_patterns.py  # 量价信号（卖出评分/交易信号）
+│   │   ├── price_patterns.py   # 价格形态（双线/单针/砖型图/B1B2B3/三波理论）
+│   │   ├── volume_patterns.py  # 量价信号（卖出评分/交易信号/出货五式）
+│   │   ├── wave_theory.py      # 三波理论识别（建仓/拉升/冲刺波）
+│   │   ├── kirin_detector.py   # 麒麟会四阶段（吸筹/拉升/派发/回落）
 │   │   └── data_layer.py       # 数据接入 + 缓存层 + 可视化
 │   ├── strategies.py           # 30+ 战法识别引擎
 │   ├── screener.py             # 选股评分体系
@@ -309,7 +320,7 @@ zettaranc-skill/
 │   ├── setup_wizard.py         # 初始化配置向导
 │   └── zettaranc_voice.py      # 语料库 / LLM 提示词模板
 ├── knowledge/                  # 知识文档（14篇交易体系）
-├── tests/                      # 单元测试（pytest，213 用例）
+├── tests/                      # 单元测试（pytest，261 用例）
 └── scripts/                    # 工具脚本
 ```
 

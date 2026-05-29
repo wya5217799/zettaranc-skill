@@ -44,7 +44,44 @@ def cmd_analyze(args):
     print(f"  RSI:  {result.rsi6:.2f}/{result.rsi12:.2f}/{result.rsi24:.2f}")
     print(f"  砖型图: {result.brick_trend}({result.brick_count}块)  值={result.brick_value:.2f}")
 
-    # 2. 策略信号
+    # 2. P2 指标：三波理论 + 麒麟会
+    print("\n【主力阶段】")
+    try:
+        from modules.indicators import DailyData, detect_three_waves, detect_kirin_stage
+        daily_klines = []
+        for i, k in enumerate(klines):
+            prev_close = klines[i-1]['close'] if i > 0 else k['close']
+            daily_klines.append(DailyData(
+                ts_code=k['ts_code'],
+                trade_date=k['trade_date'],
+                open=k['open'],
+                high=k['high'],
+                low=k['low'],
+                close=k['close'],
+                vol=k['vol'],
+                amount=k.get('amount', k['close'] * k['vol']),
+                pct_chg=k.get('pct_chg', 0),
+                prev_close=prev_close,
+            ))
+        wave = detect_three_waves(daily_klines)
+        kirin = detect_kirin_stage(daily_klines)
+
+        print(f"  三波理论: {wave['wave']} (conf={wave['confidence']}) → {wave['b1_suggestion']}")
+        if wave['stats']:
+            s = wave['stats']
+            print(f"    低点→当前: {s['low_price']:.1f}→{s['high_price']:.1f} 涨幅{s['gain_pct']:.1f}%")
+            print(f"    涨停{s['limit_up_count']}次 阳线占比{s['red_ratio']*100:.0f}% 日均{s['avg_daily_gain']:.2f}%")
+
+        print(f"  麒麟会: {kirin['stage']} (conf={kirin['confidence']}) → {kirin['operation']}")
+        if kirin['sub_type'] != '未知':
+            print(f"    子类型: {kirin['sub_type']}")
+        if kirin.get('scores'):
+            sc = kirin['scores']
+            print(f"    评分: 吸{sc['xishou']} 拉{sc['lasheng']} 派{sc['paifa']} 落{sc['luoluo']}")
+    except Exception as e:
+        print(f"  检测失败: {e}")
+
+    # 3. 策略信号
     print("\n【战法信号】")
     signals = detect_all_strategies(ts_code, days=args.days)
     if not signals:
@@ -67,7 +104,7 @@ def cmd_analyze(args):
             for s in observe[:3]:
                 print(f"     {s.trade_date} {s.strategy.value}: {s.description}")
 
-    # 3. 诊断
+    # 4. 诊断
     print("\n【持仓诊断】")
     diagnosis = diagnose_stock(ts_code, days=args.days)
     print(diagnosis)
@@ -183,7 +220,8 @@ def main():
 
     # screen
     p_screen = subparsers.add_parser('screen', help='筛选股票')
-    p_screen.add_argument('--strategy', choices=['B1', 'B2', '完美图形', '超级B1'],
+    p_screen.add_argument('--strategy',
+                          choices=['B1', 'B2', '完美图形', '超级B1', '建仓波', '吸筹', '安全'],
                           default='B1', help='筛选策略')
     p_screen.add_argument('--limit', type=int, default=20, help='输出数量')
 

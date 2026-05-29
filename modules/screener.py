@@ -423,6 +423,51 @@ def analyze_stock(ts_code: str, klines: List[Dict] = None) -> StockScore:
     volume_score, volume_reasons = score_volume_pattern(klines)
     risk_score, risk_warnings = score_risk(klines)
 
+    # ========== P2 指标：三波理论 + 麒麟会 ==========
+    wave_stage = "未知"
+    kirin_stage = "未知"
+    try:
+        from modules.indicators import DailyData, detect_three_waves, detect_kirin_stage
+        daily_klines = []
+        for i, k in enumerate(klines):
+            prev_close = klines[i-1]['close'] if i > 0 else k['close']
+            daily_klines.append(DailyData(
+                ts_code=k['ts_code'],
+                trade_date=k['trade_date'],
+                open=k['open'],
+                high=k['high'],
+                low=k['low'],
+                close=k['close'],
+                vol=k['vol'],
+                amount=k.get('amount', k['close'] * k['vol']),
+                pct_chg=k.get('pct_chg', 0),
+                prev_close=prev_close,
+            ))
+        wave = detect_three_waves(daily_klines)
+        wave_stage = wave['wave']
+        if wave_stage == '建仓波' and wave['confidence'] >= 0.5:
+            b1_reasons.append(f"三波·建仓波(conf={wave['confidence']})")
+        elif wave_stage == '拉升波':
+            b1_reasons.append(f"三波·拉升波(conf={wave['confidence']})→等回调")
+        elif wave_stage == '冲刺波':
+            risk_warnings.append(f"三波·冲刺波(conf={wave['confidence']})→不看")
+            risk_score = max(0, risk_score - 20)
+
+        kirin = detect_kirin_stage(daily_klines)
+        kirin_stage = kirin['stage']
+        if kirin_stage == '吸筹' and kirin['confidence'] >= 0.5:
+            b1_reasons.append(f"麒麟会·吸筹({kirin['sub_type']}, conf={kirin['confidence']})")
+        elif kirin_stage == '拉升':
+            b1_reasons.append(f"麒麟会·拉升({kirin['sub_type']})→不追")
+        elif kirin_stage == '派发':
+            risk_warnings.append(f"麒麟会·派发({kirin['sub_type']})→准备走人")
+            risk_score = max(0, risk_score - 30)
+        elif kirin_stage == '回落':
+            risk_warnings.append(f"麒麟会·回落({kirin['sub_type']})→不抄底")
+            risk_score = max(0, risk_score - 15)
+    except Exception:
+        pass
+
     # 综合评分（加权平均）
     # B1机会 30% + 趋势 25% + 量价 25% + 风险 20%
     total_score = b1_score * 0.3 + trend_score * 0.25 + volume_score * 0.25 + risk_score * 0.2
@@ -432,6 +477,14 @@ def analyze_stock(ts_code: str, klines: List[Dict] = None) -> StockScore:
     if is_perfect:
         total_score = min(100, total_score * 1.1)
         b1_reasons.extend(perfect_reasons)
+
+    # 三波/麒麟会加权调整
+    if wave_stage == '建仓波':
+        total_score = min(100, total_score * 1.05)
+    elif wave_stage == '冲刺波' or kirin_stage == '派发':
+        total_score = max(0, total_score * 0.7)
+    elif kirin_stage == '吸筹':
+        total_score = min(100, total_score * 1.08)
 
     score = StockScore(
         ts_code=ts_code,
@@ -461,6 +514,9 @@ def screen_stocks(criteria: str = "b1", max_stocks: int = 0) -> List[StockScore]
     - "changan": 长安战法（B1+放量长阳+缩半量）
     - "b2_breakout": B2突破（涨幅≥4%+放量+J<55+无上影线）
     - "b3_consensus": B3分歧转一致
+    - "build_wave": 建仓波（三波理论·建仓波）
+    - "xishou": 吸筹阶段（麒麟会·吸筹）
+    - "safe": 安全选股（非冲刺波 + 非派发/回落）
 
     max_stocks: 最大扫描数量，0=全量（默认500只性能保护）
     """
@@ -473,6 +529,12 @@ def screen_stocks(criteria: str = "b1", max_stocks: int = 0) -> List[StockScore]
         from .strategies import detect_b1, detect_b2, detect_b3, detect_sb1, detect_changan
     except ImportError:
         from strategies import detect_b1, detect_b2, detect_b3, detect_sb1, detect_changan
+
+    # P2 指标导入
+    try:
+        from modules.indicators import DailyData, detect_three_waves, detect_kirin_stage
+    except ImportError:
+        from indicators import DailyData, detect_three_waves, detect_kirin_stage
 
     for stock in stocks[:limit]:
         ts_code = stock['ts_code']
@@ -521,6 +583,40 @@ def screen_stocks(criteria: str = "b1", max_stocks: int = 0) -> List[StockScore]
                     score.reasons.append(f"B3分歧转一致")
                     results.append(score)
                     break
+        # P2 指标选股策略
+        elif criteria in ("build_wave", "xishou", "safe"):
+            # 转换 klines 为 DailyData
+            daily_klines = []
+            for i, k in enumerate(klines):
+                prev_close = klines[i-1]['close'] if i > 0 else k['close']
+                daily_klines.append(DailyData(
+                    ts_code=k['ts_code'],
+                    trade_date=k['trade_date'],
+                    open=k['open'],
+                    high=k['high'],
+                    low=k['low'],
+                    close=k['close'],
+                    vol=k['vol'],
+                    amount=k.get('amount', k['close'] * k['vol']),
+                    pct_chg=k.get('pct_chg', 0),
+                    prev_close=prev_close,
+                ))
+            wave = detect_three_waves(daily_klines)
+            kirin = detect_kirin_stage(daily_klines)
+
+            if criteria == "build_wave" and wave['wave'] == '建仓波' and wave['confidence'] >= 0.5:
+                score.reasons.append(f"建仓波(conf={wave['confidence']})")
+                results.append(score)
+            elif criteria == "xishou" and kirin['stage'] == '吸筹' and kirin['confidence'] >= 0.5:
+                score.reasons.append(f"吸筹({kirin['sub_type']}, conf={kirin['confidence']})")
+                results.append(score)
+            elif criteria == "safe":
+                # 安全选股：非冲刺波 + 非派发/回落
+                is_safe = (wave['wave'] != '冲刺波' and
+                           kirin['stage'] not in ('派发', '回落'))
+                if is_safe:
+                    score.reasons.append(f"安全：{wave['wave']}+{kirin['stage']}")
+                    results.append(score)
 
     # 按评分排序
     results.sort(key=lambda x: x.score, reverse=True)

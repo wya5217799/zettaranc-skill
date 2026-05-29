@@ -2,6 +2,67 @@
 
 所有值得记录的变更都会写在这里。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)。
 
+## [v2.4-fix] - 2026-05-29
+
+> **「从修复到补完，从单点到体系。」**
+
+### 核心指标递推修复
+
+- **砖形图递推逻辑修复**：`calculate_brick_value` 从独立切片改为递推 SMA 序列，与通达信一致
+- **MACD 递推优化**：`calculate_macd` 复用 `precompute_macd_sequence`，O(n²) → O(n)
+- **RSI 递推修复**：从简单平均改为递推 SMA，与 Tushare diff 一致
+- **数据源统一前复权**：`daily` → `pro_bar(adj='qfq')`，覆盖 4 个文件
+
+### Tushare 指标对比验证
+
+- **新增 `tushare_indicator_cache` 表**：16 个字段存储 Tushare 官方指标值
+- **新增 `modules/data_sync.py stk-factor` CLI**：`python -m modules.data_sync stk-factor --ts_code 600487.SH --days 365`
+- **数据一致性验证**：通过 diff 发现 RSI 偏差并修复
+
+### P0 指标补全（高价值 + 实现简单）
+
+- **滴滴战法** — 高位连续两根阴线下台阶，绕过防卖飞直接清仓
+- **MACD 金叉空 / 死叉多** — 眼看金叉/死叉即将形成，白线突然拐头，陷阱识别
+- **祖冲之法** — 目标价 = 2a - b（a=近期高点, b=近期低点）
+
+### P1 指标补全（高价值 + 实现中等）
+
+- **主力出货五式精细识别** — 加速天量大阴 / 次高点巨量长阴 / 阶梯放量下跌 / 双头双放量 / 绿肥红瘦
+- **灾后重建** — 放量金叉后缩量回踩黄线，震仓后的最佳买点
+- **跃跃欲试** — 横盘期间放巨大量，红长绿短，至少三次后突破概率大
+- **关键 K 识别** — 六种趋势转换的关键 K（下跌→上涨、横盘→上涨、上涨→下跌等）
+
+### P2 核心模块（高价值 + 实现较难）
+
+- **三波理论识别**（`modules/indicators/wave_theory.py`）
+  - 建仓波（25-50% 涨幅，无涨停）→ B1 可干
+  - 拉升波（>50% 或快速脱离，有涨停）→ 等回调
+  - 冲刺波（>100%，频繁涨停）→ 不看
+  - 评分制判定，输出置信度 + B1 建议
+- **麒麟会四阶段识别**（`modules/indicators/kirin_detector.py`）
+  - 吸筹 / 拉升 / 派发 / 回落 四阶段状态机
+  - 子类型判断：铁蝴蝶（传统庄）vs 学院派铁蝴蝶（机构）
+  - 评分制：每个阶段 0-100 分，综合量价 + 形态 + 双线指标
+- **活跃市值择时** — ⏸️ 搁置（指南针专有指标，Tushare 无对应接口）
+
+### 策略体系集成
+
+- **`modules/strategies.py`** — `detect_all_strategies()` 自动输出三波/麒麟会信号
+- **`modules/screener.py`** — 评分加权调整 + 新增选股条件：`建仓波` / `吸筹` / `安全`
+- **`modules/cli.py`** — `analyze` 输出主力阶段板块，`screen` 支持新策略选项
+
+### 文档
+
+- **`docs/v2.6.0-p2-integration.md`** — P2 模块集成文档（API 用法 / 评分逻辑 / CLI 示例）
+
+### 测试
+
+- 新增 `tests/test_wave_theory.py`（12 个用例）
+- 新增 `tests/test_kirin_detector.py`（15 个用例）
+- **全量回归测试**：261 passed, 1 skipped
+
+---
+
 ## [v2.4.0] - 2026-05-28
 
 > **「拆分到原子，组合成系统。」**

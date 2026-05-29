@@ -38,3 +38,6 @@ CLAUDE.md
 CLAUDE.md.bak
 .omc/
 
+# 对话实录（临时文件，不入库）
+对话实录*.md
+

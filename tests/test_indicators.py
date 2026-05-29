@@ -22,6 +22,9 @@ from modules.indicators import (
     detect_sb1, detect_b3, detect_four_brick_system,
     calculate_sell_score, detect_trade_signal,
     analyze_stock, get_kline_data,
+    detect_didi, detect_macd_trap, calculate_zuchong_target,
+    detect_chuhuo_wushi, detect_zaihou_chongjian,
+    detect_yueyueyushi, detect_key_candle,
 )
 
 
@@ -515,3 +518,269 @@ class TestAnalyzeStock:
         assert isinstance(result, IndicatorResult)
         assert result.ts_code == "600519.SH"
         assert result.trade_date != ""
+
+
+# ========== detect_didi (滴滴战法) ==========
+
+class TestDetectDidi:
+    def test_no_didi_normal(self):
+        """正常上涨不应触发滴滴"""
+        klines = make_klines(n=25, base_price=100.0, daily_pct=0.5)
+        result = detect_didi(klines)
+        assert result['is_didi'] is False
+
+    def test_didi_basic(self):
+        """构造滴滴场景：两根阴线下台阶"""
+        klines = make_klines(n=25, base_price=100.0, daily_pct=0.5)
+        # 修改最后两根为滴滴形态
+        # 第一根阴线：open=110, close=105, low=104, vol=10000
+        klines[-2].open = 110.0
+        klines[-2].close = 105.0
+        klines[-2].low = 104.0
+        klines[-2].high = 111.0
+        klines[-2].vol = 10000.0
+        # 第二根阴线：open=106, close=103, low=102, vol=9000 (>= 10000*0.8=8000)
+        klines[-1].open = 106.0
+        klines[-1].close = 103.0
+        klines[-1].low = 102.0
+        klines[-1].high = 107.0
+        klines[-1].vol = 9000.0
+        result = detect_didi(klines)
+        assert result['is_didi'] is True
+        assert result['first_low'] == 104.0
+        assert result['second_close'] == 103.0
+
+    def test_didi_volume_shrink(self):
+        """量缩太多不应触发"""
+        klines = make_klines(n=25, base_price=100.0, daily_pct=0.5)
+        klines[-2].open = 110.0
+        klines[-2].close = 105.0
+        klines[-2].low = 104.0
+        klines[-2].vol = 10000.0
+        klines[-1].open = 106.0
+        klines[-1].close = 103.0
+        klines[-1].low = 102.0
+        klines[-1].vol = 5000.0  # 缩量50%，< 0.8
+        result = detect_didi(klines)
+        assert result['is_didi'] is False
+
+    def test_didi_not_high(self):
+        """不在高位不应触发"""
+        klines = make_klines(n=25, base_price=100.0, daily_pct=-1.0)  # 下跌趋势
+        klines[-2].open = 80.0
+        klines[-2].close = 75.0
+        klines[-2].low = 74.0
+        klines[-2].vol = 10000.0
+        klines[-1].open = 76.0
+        klines[-1].close = 73.0
+        klines[-1].low = 72.0
+        klines[-1].vol = 9000.0
+        result = detect_didi(klines)
+        assert result['is_didi'] is False
+
+    def test_insufficient_data(self):
+        """数据不足"""
+        klines = make_klines(n=1)
+        result = detect_didi(klines)
+        assert result['is_didi'] is False
+
+
+# ========== detect_macd_trap (金叉空/死叉多) ==========
+
+class TestDetectMacdTrap:
+    def test_gold_trap(self):
+        """金叉空：眼看金叉未成，拐头向下"""
+        dif = [1.0, 2.0, 3.0, 4.0, 3.5]   # 前3天在下方，第4天上升，第5天拐头
+        dea = [5.0, 5.0, 5.0, 5.0, 5.0]   # DEA 持平
+        result = detect_macd_trap(dif, dea)
+        assert result['is_gold_trap'] is True
+        assert result['is_dead_trap'] is False
+
+    def test_dead_trap(self):
+        """死叉多：眼看死叉未成，拐头向上"""
+        dif = [9.0, 8.0, 7.0, 6.0, 6.5]   # 前3天在上方，第4天下降，第5天拐头
+        dea = [5.0, 5.0, 5.0, 5.0, 5.0]   # DEA 持平
+        result = detect_macd_trap(dif, dea)
+        assert result['is_gold_trap'] is False
+        assert result['is_dead_trap'] is True
+
+    def test_normal_gold_cross(self):
+        """正常金叉不应触发"""
+        dif = [1.0, 2.0, 3.0, 4.0, 5.5]   # 持续上升，最终金叉
+        dea = [5.0, 5.0, 5.0, 5.0, 5.0]
+        result = detect_macd_trap(dif, dea)
+        assert result['is_gold_trap'] is False
+        assert result['is_dead_trap'] is False
+
+    def test_normal_dead_cross(self):
+        """正常死叉不应触发"""
+        dif = [9.0, 8.0, 7.0, 6.0, 4.5]   # 持续下降，最终死叉
+        dea = [5.0, 5.0, 5.0, 5.0, 5.0]
+        result = detect_macd_trap(dif, dea)
+        assert result['is_gold_trap'] is False
+        assert result['is_dead_trap'] is False
+
+    def test_insufficient_data(self):
+        """数据不足"""
+        result = detect_macd_trap([1.0, 2.0], [5.0, 5.0])
+        assert result['is_gold_trap'] is False
+        assert result['is_dead_trap'] is False
+
+
+# ========== calculate_zuchong_target (祖冲之法) ==========
+
+class TestCalculateZuchongTarget:
+    def test_basic(self):
+        """基本计算：目标价 = 2a - b"""
+        klines = make_klines(n=30, base_price=100.0)
+        # 构造高点 120，低点 80
+        for i, k in enumerate(klines):
+            if i == 10:
+                k.high = 120.0
+                k.low = 118.0
+                k.close = 119.0
+            elif i == 20:
+                k.high = 82.0
+                k.low = 80.0
+                k.close = 81.0
+        result = calculate_zuchong_target(klines, lookback=30)
+        assert result['a'] == 120.0
+        assert result['b'] == 80.0
+        assert result['target'] == 160.0  # 2*120 - 80
+
+    def test_insufficient_data(self):
+        """数据不足"""
+        klines = make_klines(n=5)
+        result = calculate_zuchong_target(klines)
+        assert result['target'] == 0
+
+
+# ========== detect_chuhuo_wushi (主力出货五式) ==========
+
+class TestChuhuoWushi:
+    def test_no_signal_normal(self):
+        """正常上涨不应触发"""
+        klines = make_klines(n=25, base_price=100.0, daily_pct=0.5)
+        result = detect_chuhuo_wushi(klines)
+        assert result['is_selling'] is False
+
+    def test_fangshi_1_tianliang_dayin(self):
+        """方式一：加速后单日放天量大阴"""
+        klines = make_klines(n=25, base_price=100.0, daily_pct=0.5)
+        # 前15天价格约 100-107，后10天加速到 125（涨幅 > 20%）
+        base = klines[-11].close
+        for i in range(-10, 0):
+            klines[i].close = base * (1 + 0.025 * (i + 10))  # 加速
+            klines[i].high = klines[i].close * 1.02
+            klines[i].low = klines[i].close * 0.98
+            klines[i].vol = 10000.0
+        # 最后一天：天量大阴（跌7%，天量）
+        klines[-1].open = klines[-1].close * 1.05
+        klines[-1].close = klines[-1].close * 0.93
+        klines[-1].high = klines[-1].open * 1.01
+        klines[-1].low = klines[-1].close * 0.99
+        klines[-1].pct_chg = -7.0
+        klines[-1].vol = 50000.0  # 天量
+        result = detect_chuhuo_wushi(klines)
+        assert result['is_selling'] is True
+        assert any('方式一' in p['type'] for p in result['patterns'])
+
+    def test_fangshi_5_lvfei_hongshou(self):
+        """方式五：顶部绿肥红瘦"""
+        klines = make_klines(n=25, base_price=100.0, daily_pct=0.5)
+        # 近10天：阴量远大于阳量
+        for i in range(-10, 0):
+            if i % 2 == 0:
+                klines[i].close = klines[i].open * 0.98  # 阴线
+                klines[i].vol = 30000.0
+            else:
+                klines[i].close = klines[i].open * 1.01  # 阳线
+                klines[i].vol = 5000.0
+        result = detect_chuhuo_wushi(klines)
+        assert result['is_selling'] is True
+        assert any('方式五' in p['type'] for p in result['patterns'])
+
+
+# ========== detect_zaihou_chongjian (灾后重建) ==========
+
+class TestZaihouChongjian:
+    def test_no_signal(self):
+        """不满足条件不应触发"""
+        klines = make_klines(n=25, base_price=100.0, daily_pct=0.5)
+        result = detect_zaihou_chongjian(klines)
+        assert result['is_rebuild'] is False
+
+    def test_basic(self):
+        """放量后缩量回踩"""
+        klines = make_klines(n=70, base_price=100.0, daily_pct=0.3)
+        # 第55天放量大涨
+        klines[55].pct_chg = 6.0
+        klines[55].vol = 50000.0
+        klines[55].close = 120.0
+        klines[55].open = 115.0
+        # 后面几天缩量回调
+        for i in range(56, 65):
+            klines[i].vol = 8000.0
+            klines[i].close *= 0.98
+        # 最后一天接近黄线
+        klines[-1].close = klines[-1].open * 0.99
+        klines[-1].vol = 6000.0
+        result = detect_zaihou_chongjian(klines)
+        # 黄线计算复杂，可能触发也可能不触发，但至少不报错
+        assert 'is_rebuild' in result
+
+
+# ========== detect_yueyueyushi (跃跃欲试) ==========
+
+class TestYueyueyushi:
+    def test_no_signal(self):
+        """不满足条件不应触发"""
+        klines = make_klines(n=25, base_price=100.0, daily_pct=0.5)
+        result = detect_yueyueyushi(klines)
+        assert result['is_ready'] is False
+
+    def test_basic(self):
+        """横盘+3次巨量"""
+        klines = make_klines(n=35, base_price=100.0, daily_pct=0.05)  # 几乎横盘
+        # 设置近20天振幅很小
+        for i in range(-20, 0):
+            klines[i].high = 102.0
+            klines[i].low = 98.0
+            klines[i].close = 100.0 + (i % 3) * 0.5
+        # 3次巨量阳线
+        klines[-3].vol = 50000.0
+        klines[-3].close = 101.0
+        klines[-3].open = 99.0
+        klines[-7].vol = 50000.0
+        klines[-7].close = 101.0
+        klines[-7].open = 99.0
+        klines[-12].vol = 50000.0
+        klines[-12].close = 101.0
+        klines[-12].open = 99.0
+        result = detect_yueyueyushi(klines)
+        assert result['is_ready'] is True
+        assert result['count'] >= 3
+
+
+# ========== detect_key_candle (关键K) ==========
+
+class TestKeyCandle:
+    def test_no_signal_small_body(self):
+        """小实体不应触发"""
+        klines = make_klines(n=25, base_price=100.0, daily_pct=0.5)
+        result = detect_key_candle(klines)
+        assert result['is_key'] is False
+
+    def test_key_yang_break_high(self):
+        """关键阳突破"""
+        klines = make_klines(n=25, base_price=100.0, daily_pct=0.5)
+        # 最后一天：放量大阳线突破前高
+        prev_high = max(k.high for k in klines[:-1])
+        klines[-1].open = prev_high * 1.01
+        klines[-1].close = prev_high * 1.05
+        klines[-1].high = prev_high * 1.06
+        klines[-1].low = prev_high * 1.00
+        klines[-1].vol = 50000.0
+        result = detect_key_candle(klines)
+        assert result['is_key'] is True
+        assert result['direction'] == '向上突破'

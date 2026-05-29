@@ -166,10 +166,12 @@ class DataSyncer:
 
         try:
             self._rate_limit("daily_kline")
-            df = self.pro.daily(
+            df = ts.pro_bar(
                 ts_code=ts_code,
                 start_date=start_date,
-                end_date=end_date
+                end_date=end_date,
+                adj='qfq',
+                api=self.pro,
             )
 
             if df is None or len(df) == 0:
@@ -446,6 +448,115 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 
         logger.info(f"批量指标同步完成，成功 {sum(1 for v in results.values() if v > 0)}/{len(ts_codes)}")
         return results
 
+    # ==================== Tushare 官方指标（用于 diff 验证） ====================
+
+    def sync_stk_factor(self, ts_code: str, start_date: Optional[str] = None,
+                        end_date: Optional[str] = None) -> int:
+        """
+        同步单只股票的 Tushare 官方技术指标（stk_factor 接口）
+
+        Args:
+            ts_code: 股票代码
+            start_date: 开始日期 YYYYMMDD
+            end_date: 结束日期 YYYYMMDD
+
+        Returns:
+            更新条数
+        """
+        try:
+            if start_date is None:
+                start_date = (datetime.now() - timedelta(days=365)).strftime("%Y%m%d")
+            if end_date is None:
+                end_date = datetime.now().strftime("%Y%m%d")
+
+            self._rate_limit("stk_factor")
+            df = self.pro.stk_factor(ts_code=ts_code, start_date=start_date, end_date=end_date)
+
+            if df is None or len(df) == 0:
+                return 0
+
+            # 字段映射：Tushare 字段名 -> 数据库字段名
+            field_map = {
+                'ts_code': 'ts_code',
+                'trade_date': 'trade_date',
+                'close': 'close',
+                'macd_dif': 'macd_dif',
+                'macd_dea': 'macd_dea',
+                'macd': 'macd',
+                'kdj_k': 'kdj_k',
+                'kdj_d': 'kdj_d',
+                'kdj_j': 'kdj_j',
+                'rsi_6': 'rsi_6',
+                'rsi_12': 'rsi_12',
+                'rsi_24': 'rsi_24',
+                'boll_upper': 'boll_upper',
+                'boll_mid': 'boll_mid',
+                'boll_lower': 'boll_lower',
+                'cci': 'cci',
+            }
+
+            with get_connection() as conn:
+                cursor = conn.cursor()
+                for _, row in df.iterrows():
+                    values = [row.get(field_map.get(k, k), 0) for k in field_map.keys()]
+                    cursor.execute("""
+                        INSERT OR REPLACE INTO tushare_indicator_cache
+                        (ts_code, trade_date, close, macd_dif, macd_dea, macd,
+                         kdj_k, kdj_d, kdj_j, rsi_6, rsi_12, rsi_24,
+                         boll_upper, boll_mid, boll_lower, cci)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, values)
+
+            latest_date = df['trade_date'].max()
+            self._log_sync("stk_factor", ts_code, latest_date, "success")
+            logger.info(f"Tushare 指标同步完成: {ts_code}, {len(df)} 条")
+            return len(df)
+
+        except Exception as e:
+            logger.error(f"Tushare 指标同步失败 {ts_code}: {e}")
+            self._log_sync("stk_factor", ts_code, "", "failed", str(e))
+            return 0
+
+    def sync_all_stk_factor(self, ts_codes: Optional[List[str]] = None,
+                            days: int = 365) -> Dict[str, int]:
+        """
+        批量同步多只股票的 Tushare 官方指标
+
+        Args:
+            ts_codes: 股票代码列表，None 表示同步所有股票
+            days: 同步天数
+
+        Returns:
+            每只股票的更新条数
+        """
+        results = {}
+
+        if ts_codes is None:
+            with get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT ts_code FROM stock_basic")
+                ts_codes = [row['ts_code'] for row in cursor.fetchall()]
+
+        logger.info(f"开始批量同步 Tushare 指标，共 {len(ts_codes)} 只股票...")
+
+        start_date = (datetime.now() - timedelta(days=days)).strftime("%Y%m%d")
+        end_date = datetime.now().strftime("%Y%m%d")
+
+        for i, ts_code in enumerate(ts_codes):
+            try:
+                count = self.sync_stk_factor(ts_code, start_date, end_date)
+                results[ts_code] = count
+
+                if (i + 1) % 10 == 0:
+                    logger.info(f"进度: {i + 1}/{len(ts_codes)}")
+
+            except Exception as e:
+                logger.error(f"Tushare 指标同步失败 {ts_code}: {e}")
+                results[ts_code] = 0
+
+        logger.info(f"批量 Tushare 指标同步完成，成功 {sum(1 for v in results.values() if v > 0)}/{len(ts_codes)}")
+        return results
+
 
     # ==================== 资金流向 ====================
 
@@ -533,8 +644,8 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser(description="Tushare 数据同步工具")
-    parser.add_argument("action", choices=["init", "sync", "status"],
-                        help="操作: init=初始化数据库, sync=同步数据, status=查看状态")
+    parser.add_argument("action", choices=["init", "sync", "status", "stk-factor"],
+                        help="操作: init=初始化数据库, sync=同步数据, status=查看状态, stk-factor=同步Tushare官方指标")
     parser.add_argument("--ts_code", help="股票代码，如 000001.SZ")
     parser.add_argument("--days", type=int, default=730, help="同步天数")
     parser.add_argument("--indicators", action="store_true",
@@ -575,6 +686,21 @@ def main():
 
         print("同步完成")
         print(syncer.get_sync_status())
+
+    elif args.action == "stk-factor":
+        syncer = DataSyncer()
+
+        if args.ts_code:
+            print(f"正在同步 Tushare 官方指标: {args.ts_code} ...")
+            start_date = (datetime.now() - timedelta(days=args.days)).strftime("%Y%m%d")
+            end_date = datetime.now().strftime("%Y%m%d")
+            count = syncer.sync_stk_factor(args.ts_code, start_date=start_date, end_date=end_date)
+            print(f"同步完成，{count} 条")
+        else:
+            print("正在批量同步 Tushare 官方指标...")
+            results = syncer.sync_all_stk_factor(days=args.days)
+            success = sum(1 for v in results.values() if v > 0)
+            print(f"批量同步完成，成功 {success}/{len(results)}")
 
     elif args.action == "status":
         syncer = DataSyncer()

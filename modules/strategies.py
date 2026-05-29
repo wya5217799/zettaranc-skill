@@ -72,6 +72,9 @@ class StrategyType(Enum):
     PAIFA = "派发"                # 麒麟会派发阶段
     LUOLUO = "回落"               # 麒麟会回落阶段
 
+    # 观察/提示
+    WATCH = "观察"                # 阶段判断、提示信号
+
     # 砖形图信号
     BRICK_EXIT = "四块砖翻绿"      # 红砖翻绿 → 止损
     BRICK_REDUCE = "四块砖减仓"    # 红砖满4块 → 减仓一半
@@ -83,6 +86,14 @@ class Priority(Enum):
     CRITICAL = 3     # 紧急：止损、逃顶
     OPPORTUNITY = 2  # 机会：买点、战法
     OBSERVE = 1      # 观察：提示、减仓、阶段判断
+
+
+class Action(Enum):
+    """交易建议"""
+    BUY = "BUY"
+    SELL = "SELL"
+    HOLD = "HOLD"
+    WATCH = "WATCH"
 
 
 @dataclass
@@ -908,9 +919,19 @@ def detect_all_strategies(ts_code: str, days: int = 120) -> List[StrategySignal]
     daily_klines = _dict_to_daily(klines)
 
     try:
-        from modules.indicators import precompute_kdj_sequence, precompute_bbi_sequence
+        from modules.indicators import (
+            precompute_kdj_sequence, precompute_bbi_sequence,
+            detect_didi, detect_macd_trap,
+            detect_chuhuo_wushi, detect_zaihou_chongjian,
+            detect_yueyueyushi, detect_key_candle
+        )
     except ImportError:
-        from indicators import precompute_kdj_sequence, precompute_bbi_sequence
+        from indicators import (
+            precompute_kdj_sequence, precompute_bbi_sequence,
+            detect_didi, detect_macd_trap,
+            detect_chuhuo_wushi, detect_zaihou_chongjian,
+            detect_yueyueyushi, detect_key_candle
+        )
 
     kdj_sequence = precompute_kdj_sequence(daily_klines)
     bbi_sequence = precompute_bbi_sequence(daily_klines)
@@ -1010,6 +1031,150 @@ def detect_all_strategies(ts_code: str, days: int = 120) -> List[StrategySignal]
             signal = detect_brick_signals(klines, i)
             if signal:
                 signals.append(signal)
+
+        # ===== P1 指标全局检测（只针对最新一天）======
+        if daily_klines:
+            # 滴滴战法
+            didi_result = detect_didi(daily_klines)
+            if didi_result.get('is_didi'):
+                signals.append(StrategySignal(
+                    trade_date=klines[-1]['trade_date'],
+                    strategy=StrategyType.S1,
+                    action=Action.SELL,
+                    confidence=0.95,
+                    price=klines[-1]['close'],
+                    reason=f"滴滴战法：高位连续两根阴线下台阶，"
+                           f"第二根收盘({didi_result['second_close']}) < 第一根最低({didi_result['first_low']})，"
+                           f"量未缩({didi_result['volume_ratio']}倍)"
+                ))
+
+            # MACD 金叉空 / 死叉多
+            try:
+                from modules.indicators import calculate_macd
+            except ImportError:
+                from indicators import calculate_macd
+            dif_list_all, dea_list_all, _ = calculate_macd(daily_klines)
+            if dif_list_all and dea_list_all:
+                trap = detect_macd_trap(dif_list_all, dea_list_all)
+                if trap.get('is_gold_trap'):
+                    signals.append(StrategySignal(
+                        trade_date=klines[-1]['trade_date'],
+                        strategy=StrategyType.S1,
+                        action=Action.SELL,
+                        confidence=0.85,
+                        price=klines[-1]['close'],
+                        reason="MACD 金叉空：眼看金叉未成，白线拐头向下，诱多陷阱"
+                    ))
+                if trap.get('is_dead_trap'):
+                    signals.append(StrategySignal(
+                        trade_date=klines[-1]['trade_date'],
+                        strategy=StrategyType.B1,
+                        action=Action.BUY,
+                        confidence=0.85,
+                        price=klines[-1]['close'],
+                        reason="MACD 死叉多：眼看死叉未成，白线拐头向上，空中加油"
+                    ))
+
+            # 主力出货五式
+            chuhuo = detect_chuhuo_wushi(daily_klines)
+            if chuhuo.get('is_selling') and chuhuo.get('patterns'):
+                top = chuhuo['patterns'][0]
+                signals.append(StrategySignal(
+                    trade_date=klines[-1]['trade_date'],
+                    strategy=StrategyType.S1,
+                    action=Action.SELL,
+                    confidence=top['confidence'],
+                    price=klines[-1]['close'],
+                    reason=f"出货五式：{top['type']} - {top['desc']}"
+                ))
+
+            # 灾后重建
+            rebuild = detect_zaihou_chongjian(daily_klines)
+            if rebuild.get('is_rebuild'):
+                signals.append(StrategySignal(
+                    trade_date=klines[-1]['trade_date'],
+                    strategy=StrategyType.B1,
+                    action=Action.BUY,
+                    confidence=rebuild['confidence'],
+                    price=klines[-1]['close'],
+                    reason=rebuild['desc']
+                ))
+
+            # 跃跃欲试
+            ready = detect_yueyueyushi(daily_klines)
+            if ready.get('is_ready'):
+                signals.append(StrategySignal(
+                    trade_date=klines[-1]['trade_date'],
+                    strategy=StrategyType.B2,
+                    action=Action.BUY,
+                    confidence=ready['confidence'],
+                    price=klines[-1]['close'],
+                    reason=ready['desc']
+                ))
+
+            # 关键K
+            key_k = detect_key_candle(daily_klines)
+            if key_k.get('is_key'):
+                sig_type = StrategyType.S1 if '阴破位' in key_k.get('type', '') else StrategyType.B1
+                signals.append(StrategySignal(
+                    trade_date=klines[-1]['trade_date'],
+                    strategy=sig_type,
+                    action=Action.SELL if sig_type == StrategyType.S1 else Action.BUY,
+                    confidence=key_k['confidence'],
+                    price=klines[-1]['close'],
+                    reason=f"关键K：{key_k['type']} - {key_k['direction']}"
+                ))
+
+            # ========== P2 指标：三波理论 ==========
+            try:
+                from modules.indicators import detect_three_waves
+            except ImportError:
+                from indicators import detect_three_waves
+            wave = detect_three_waves(daily_klines)
+            if wave['wave'] != '未知' and wave['confidence'] >= 0.5:
+                wave_map = {
+                    '建仓波': (StrategyType.B1, Action.BUY, f"三波理论·建仓波：{wave['stats']['gain_pct']}% 涨幅，B1可干"),
+                    '拉升波': (StrategyType.WATCH, Action.HOLD, f"三波理论·拉升波：{wave['stats']['gain_pct']}% 涨幅，等回调"),
+                    '冲刺波': (StrategyType.S1, Action.SELL, f"三波理论·冲刺波：{wave['stats']['gain_pct']}% 涨幅，不看"),
+                }
+                if wave['wave'] in wave_map:
+                    st, act, desc = wave_map[wave['wave']]
+                    signals.append(StrategySignal(
+                        ts_code=ts_code,
+                        trade_date=klines[-1]['trade_date'],
+                        strategy=st,
+                        action=act.value,
+                        confidence=wave['confidence'],
+                        description=desc,
+                        details={'price': klines[-1]['close']},
+                        priority=Priority.OPPORTUNITY if st in (StrategyType.B1, StrategyType.B2) else Priority.OBSERVE
+                    ))
+
+            # ========== P2 指标：麒麟会四阶段 ==========
+            try:
+                from modules.indicators import detect_kirin_stage
+            except ImportError:
+                from indicators import detect_kirin_stage
+            kirin = detect_kirin_stage(daily_klines)
+            if kirin['stage'] != '未知' and kirin['confidence'] >= 0.4:
+                kirin_map = {
+                    '吸筹': (StrategyType.XISHOU, Action.WATCH, f"麒麟会·吸筹：{kirin['sub_type']}，关注等B1"),
+                    '拉升': (StrategyType.LASHENG, Action.HOLD, f"麒麟会·拉升：{kirin['sub_type']}，不追等回调"),
+                    '派发': (StrategyType.PAIFA, Action.SELL, f"麒麟会·派发：{kirin['sub_type']}，准备走人"),
+                    '回落': (StrategyType.LUOLUO, Action.SELL, f"麒麟会·回落：{kirin['sub_type']}，不抄底"),
+                }
+                if kirin['stage'] in kirin_map:
+                    st, act, desc = kirin_map[kirin['stage']]
+                    signals.append(StrategySignal(
+                        ts_code=ts_code,
+                        trade_date=klines[-1]['trade_date'],
+                        strategy=st,
+                        action=act.value,
+                        confidence=kirin['confidence'],
+                        description=desc,
+                        details={'price': klines[-1]['close']},
+                        priority=Priority.OBSERVE
+                    ))
 
         # ===== 信号后处理：去重 + 截断 + 排序 =====
         signals = _post_process_signals(signals)

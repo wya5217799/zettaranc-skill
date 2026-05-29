@@ -334,10 +334,12 @@ class TushareFetcher:
         """获取日线行情"""
         self._rate_limit("daily")
         try:
-            df = self.pro.daily(
+            df = ts.pro_bar(
                 ts_code=ts_code,
                 start_date=start_date,
-                end_date=end_date
+                end_date=end_date,
+                adj='qfq',
+                api=self.pro,
             )
             logger.info(f"[daily] {ts_code} 获取成功，共 {len(df)} 条")
             return df

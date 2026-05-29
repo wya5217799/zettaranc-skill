@@ -267,9 +267,11 @@ def calculate_ema(prices: List[float], period: int) -> float:
         ema = price * k + ema * (1 - k)
 
     return ema
+
+
 def calculate_sma_td(values: List[float], period: int, m: int) -> float:
     """
-    通达信 SMA 函数
+    通达信 SMA 函数（返回最后一个值）
 
     公式: SMA = X * M/N + SMA_prev * (1 - M/N)
 
@@ -291,6 +293,40 @@ def calculate_sma_td(values: List[float], period: int, m: int) -> float:
         sma = v * weight + sma * (1 - weight)
 
     return sma
+
+
+def calculate_sma_series(values: List[float], period: int, m: int) -> List[float]:
+    """
+    通达信 SMA 递推序列（返回完整序列）
+
+    与通达信完全一致：从序列第一个值开始递推，
+    每个点的 SMA 都承接前一个点的结果。
+
+    公式: SMA[i] = values[i] * M/N + SMA[i-1] * (1 - M/N)
+    初始值: SMA[0] = values[0]
+
+    Args:
+        values: 输入序列
+        period: 周期 N
+        m: 权重 M
+
+    Returns:
+        SMA 序列（长度与输入一致）
+    """
+    if not values:
+        return []
+
+    weight = m / period
+    sma = values[0]
+    result = [sma]
+
+    for v in values[1:]:
+        sma = v * weight + sma * (1 - weight)
+        result.append(sma)
+
+    return result
+
+
 def calculate_slope(values: List[float], period: int) -> float:
     """
     通达信 SLOPE 函数（线性回归斜率）
@@ -493,6 +529,9 @@ def calculate_macd(klines: List[DailyData],
     DEA: EMA(DIFF, 9)
     MACD: 2 * (DIFF - DEA), COLORSTICK
 
+    内部复用 precompute_macd_sequence 的 O(n) 递推实现，
+    避免对子序列重复调用 calculate_ema 导致的 O(n²) 性能和精度问题。
+
     Args:
         klines: K线数据
         fast: 快线周期，默认12
@@ -505,31 +544,15 @@ def calculate_macd(klines: List[DailyData],
     if len(klines) < slow:
         return [], [], []
 
-    closes = [k.close for k in klines]
+    dif_seq, dea_seq, macd_seq = precompute_macd_sequence(klines, fast, slow, signal)
 
-    # 计算完整的 DIF 序列
-    dif_list = []
-    for i in range(slow - 1, len(closes)):
-        sub = closes[:i + 1]
-        ema_fast = calculate_ema(sub, fast)
-        ema_slow = calculate_ema(sub, slow)
-        dif_list.append(ema_fast - ema_slow)
+    # DIF 从 slow-1 开始有效
+    dif_list = dif_seq[slow - 1:]
 
-    if len(dif_list) < signal:
-        return dif_list, [], []
-
-    # 计算完整的 DEA 序列（DIF 的 EMA）
-    dea_list = []
-    for i in range(signal - 1, len(dif_list)):
-        sub_dif = dif_list[:i + 1]
-        dea_list.append(calculate_ema(sub_dif, signal))
-
-    # MACD 柱 = 2 * (DIF - DEA)
-    macd_list = []
-    for i in range(len(dea_list)):
-        dif_idx = signal - 1 + i
-        if dif_idx < len(dif_list):
-            macd_list.append(2 * (dif_list[dif_idx] - dea_list[i]))
+    # DEA/MACD 从 slow+signal-2 开始有效
+    dea_start = slow + signal - 2
+    dea_list = dea_seq[dea_start:]
+    macd_list = macd_seq[dea_start:]
 
     return dif_list, dea_list, macd_list
 def calculate_bbi(klines: List[DailyData]) -> float:
@@ -552,10 +575,12 @@ def calculate_bbi(klines: List[DailyData]) -> float:
 def calculate_rsi(klines: List[DailyData],
                   period: int = 14) -> float:
     """
-    计算 RSI 相对强弱指标
+    计算 RSI 相对强弱指标（通达信标准公式）
 
     通达信公式:
     RSI := SMA(MAX(CLOSE-REF(CLOSE,1),0),N,1) / SMA(ABS(CLOSE-REF(CLOSE,1)),N,1) * 100
+
+    关键点：分子分母都是递推 SMA，不是简单平均。
 
     Args:
         klines: K线数据
@@ -569,26 +594,29 @@ def calculate_rsi(klines: List[DailyData],
 
     closes = [k.close for k in klines]
 
-    # 计算涨跌序列
+    # 计算每日涨跌序列
     changes = []
     for i in range(1, len(closes)):
-        change = closes[i] - closes[i-1]
-        changes.append(change)
+        changes.append(closes[i] - closes[i-1])
 
     if len(changes) < period:
         return 50
 
-    # 计算这段时间的上涨和下跌
-    recent_changes = changes[-period:]
+    # 分离上涨和下跌
+    up_list = [max(c, 0) for c in changes]
+    down_list = [abs(min(c, 0)) for c in changes]
 
-    up_sum = sum(max(c, 0) for c in recent_changes)
-    down_sum = sum(abs(min(c, 0)) for c in recent_changes)
+    # 用递推 SMA 计算平均上涨和平均下跌（和通达信一致）
+    avg_up_list = calculate_sma_series(up_list, period, 1)
+    avg_down_list = calculate_sma_series(down_list, period, 1)
 
-    if down_sum == 0:
+    avg_up = avg_up_list[-1]
+    avg_down = avg_down_list[-1]
+
+    if avg_down == 0:
         return 100  # 一直涨
 
-    rs = up_sum / down_sum
-    rsi = 100 - (100 / (1 + rs))
+    rsi = avg_up / (avg_up + avg_down) * 100
 
     return round(rsi, 2)
 def calculate_rsi_multi(klines: List[DailyData]) -> Tuple[float, float, float]:
@@ -605,6 +633,61 @@ def calculate_rsi_multi(klines: List[DailyData]) -> Tuple[float, float, float]:
     rsi12 = calculate_rsi(klines, 12) if len(klines) >= 13 else 50
     rsi24 = calculate_rsi(klines, 24) if len(klines) >= 25 else 50
     return rsi6, rsi12, rsi24
+
+
+def detect_macd_trap(dif_list: List[float], dea_list: List[float]) -> Dict[str, bool]:
+    """
+    MACD 金叉空 / 死叉多 陷阱识别
+
+    来源：indicators.md 3.12「金叉空 + 死叉多」
+    核心价值：避开 90% 的诱多/诱空陷阱。
+
+    金叉空：眼看就要金叉，白线(DIF)突然拐头向下，金叉没成
+      → 原下跌趋势延续，最恶毒的诱多
+      → 条件：前3天 DIF 在 DEA 下方 + DIF 连续上升接近 DEA + 最近拐头向下
+
+    死叉多：眼看就要死叉，白线(DIF)突然拐头向上，死叉没成
+      → 原上涨趋势延续，空中加油
+      → 条件：前3天 DIF 在 DEA 上方 + DIF 连续下降接近 DEA + 最近拐头向上
+
+    Args:
+        dif_list: DIF 序列（至少5个点）
+        dea_list: DEA 序列（至少5个点）
+
+    Returns:
+        {'is_gold_trap': bool, 'is_dead_trap': bool}
+    """
+    if len(dif_list) < 5 or len(dea_list) < 5:
+        return {'is_gold_trap': False, 'is_dead_trap': False}
+
+    # 取最近5天
+    dif = dif_list[-5:]
+    dea = dea_list[-5:]
+
+    # ====== 金叉空检测 ======
+    # 前3天 DIF 在 DEA 下方（空头区间）
+    is_below = all(dif[i] < dea[i] for i in range(3))
+    # 第3天 → 第4天 DIF 上升（眼看金叉）
+    is_approaching = dif[2] < dif[3]
+    # 第4天 → 第5天 DIF 拐头向下（金叉没成）
+    is_turn_down = dif[3] > dif[4]
+    # 最终 DIF 仍在 DEA 下方
+    is_gold_trap = is_below and is_approaching and is_turn_down and dif[4] < dea[4]
+
+    # ====== 死叉多检测 ======
+    # 前3天 DIF 在 DEA 上方（多头区间）
+    is_above = all(dif[i] > dea[i] for i in range(3))
+    # 第3天 → 第4天 DIF 下降（眼看死叉）
+    is_approaching_dead = dif[2] > dif[3]
+    # 第4天 → 第5天 DIF 拐头向上（死叉没成）
+    is_turn_up = dif[3] < dif[4]
+    # 最终 DIF 仍在 DEA 上方
+    is_dead_trap = is_above and is_approaching_dead and is_turn_up and dif[4] > dea[4]
+
+    return {
+        'is_gold_trap': is_gold_trap,
+        'is_dead_trap': is_dead_trap
+    }
 def calculate_wr(klines: List[DailyData], period: int = 14) -> float:
     """
     计算 Williams %R 威廉指标

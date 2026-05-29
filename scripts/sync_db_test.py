@@ -387,10 +387,12 @@ class TushareSyncer:
 
         try:
             self._rate_limit("daily_kline")
-            df = self.pro.daily(
+            df = ts.pro_bar(
                 ts_code=ts_code,
                 start_date=start_date,
-                end_date=end_date
+                end_date=end_date,
+                adj='qfq',
+                api=self.pro,
             )
 
             if df is None or len(df) == 0:
