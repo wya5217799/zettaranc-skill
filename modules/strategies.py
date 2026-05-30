@@ -120,7 +120,7 @@ def _resolve_db_path() -> Path:
     path_str = os.getenv("DB_PATH", "data/stock_data.db")
     path = Path(path_str)
     if not path.is_absolute():
-        path = (Path(__file__).parent / path_str).resolve()
+        path = (Path(__file__).parent.parent / path_str).resolve()
     return path
 
 

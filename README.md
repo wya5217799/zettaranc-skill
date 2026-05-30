@@ -1,12 +1,10 @@
-<div align="center">
-
 # zettaranc（万千）· 思维操作系统
 
 > *「利润是市场给的，都是概率的事儿，谁也别吹牛逼。」*
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-Skill-blueviolet)](https://claude.ai/code)
-[![v2.4-fix](https://img.shields.io/badge/version-2.4--fix-red)](CHANGELOG.md)
+[![v2.7.0](https://img.shields.io/badge/version-2.7.0-red)](CHANGELOG.md)
 
 <br>
 
@@ -15,32 +13,44 @@
 
 <br>
 
-[快速开始](#快速开始) · [CLI 工具](#cli-工具) · [Python API](#python-api) · [架构说明](#架构说明) · [更新日志](CHANGELOG.md)
+[快速开始](#快速开始) · [CLI 工具](#cli-工具) · [Python API](#python-api) · [使用手册](docs/USER_GUIDE.md) · [架构说明](#架构说明) · [更新日志](docs/CHANGELOG.md)
 
 </div>
 
 ---
 
-## v2.4.0 能做什么
+## v2.7.0 能做什么
 
 > **不是聊天机器人，是跑在真实数据上的交易分析引擎。**
+
+### 数据规模
+
+| 数据表 | 行数 | 说明 |
+|--------|------|------|
+| stock_basic | 5,525 | 全量 A 股基本信息 |
+| daily_kline | 25,591 | 测试股票 2 年 K 线（可增量同步至全量） |
+| indicator_cache | 6,360 | 60+ 技术指标每日快照 |
+| moneyflow | 207,361 | 全市场资金流向（60 天） |
+| financial_data | 2,733 | 财报数据（含 PE/PB/PS） |
+| tushare_indicator_cache | 12,554 | Tushare 官方指标（diff 验证用） |
 
 ### 四大核心能力
 
 | 能力 | 说明 | 示例 |
 |------|------|------|
 | **📊 股票分析** | 60+ 技术指标实时计算，战法自动识别 | `python -m modules.cli analyze 600487.SH` |
-| **📈 策略回测** | 单策略 / 多策略组合回测，资金曲线 + 夏普比率 | `python -m modules.cli backtest 600487.SH --strategy all` |
-| **🔍 智能选股** | 曼城评分体系全市场扫描，B1/B2/B3 信号自动筛选 | `python -m modules.cli screener` |
-| **👁️ 观察池管理** | 自选股批量监控，每日信号扫描 + 报告生成 | `python -m modules.cli watchlist` |
+| **📈 策略回测** | 单策略 / 多策略组合回测，资金曲线 + 夏普比率 | `from modules.backtest import backtest_multi_strategy` |
+| **🔍 智能选股** | 曼城评分体系全市场扫描，B1/B2/B3 信号自动筛选 | `python -m modules.cli screen --strategy B1 --limit 20` |
+| **👁️ 观察池管理** | 自选股批量监控，每日信号扫描 + 报告生成 | `python -m modules.cli watchlist scan` |
 
 ### 完整功能清单
 
 **数据层**
-- ✅ Tushare 真实行情接入（日线 OHLCV、资金流向、财务数据）
-- ✅ SQLite 本地缓存（5524 只股票基本信息 + K线 + 指标快照）
+- ✅ Tushare 真实行情接入（日线 OHLCV、资金流向、财报、财务指标）
+- ✅ SQLite 本地缓存（5525 只股票基本信息 + K线 + 指标快照 + 财报）
 - ✅ 增量同步（只拉取新增数据，避免重复请求）
 - ✅ 120次/分钟限流保护
+- ✅ 财务数据多接口组合（fina_indicator + income + balancesheet + daily_basic）
 
 **指标计算（60+）**
 - ✅ KDJ / MACD / BBI / RSI / WR / 布林带 / DMI
@@ -62,6 +72,7 @@
 - ✅ 选股评分（趋势/量价/风险三维度）
 - ✅ 自选股观察池（增删改查 + 批量扫描）
 - ✅ 策略组合回测（多策略融合 + 资金曲线 + 仓位管理）
+- ✅ 随堂交易记录（口语化输入 → 战法匹配 → Z 哥点评）
 
 **LLM 角色层**
 - ✅ Z 哥角色扮演（用「我」而非「Z哥认为」）
@@ -77,7 +88,7 @@
 ```bash
 git clone https://github.com/lululu811/zettaranc-skill.git
 cd zettaranc-skill
-pip install -e .
+pip install -r requirements.txt
 ```
 
 > 安装完成后会注册 `zt` 命令（`zt analyze`、`zt screen`、`zt watchlist`、`zt diagnose`）。如不安装，也可直接 `python -m modules.cli` 调用。
@@ -97,7 +108,9 @@ TUSHARE_API_URL=https://tt.xiaodefa.cn
 DB_PATH=data/stock_data.db
 ```
 
-> **Token 获取**：前往 [Tushare 官网](https://tushare.pro/) 注册。本项目支持中转 API，无需高级积分。
+> **Token 获取**：前往 [Tushare 官网](https://tushare.pro/user/token) 注册。
+> 
+> **中转 API**：`https://tt.xiaodefa.cn`，无需高级积分，支持限流 120 次/分钟。
 
 ### 3. 初始化
 
@@ -105,7 +118,7 @@ DB_PATH=data/stock_data.db
 # 创建数据库（8张表）
 python -m modules.database
 
-# 同步股票基本信息（5524只，只需执行一次）
+# 同步股票基本信息（5525只，只需执行一次）
 python -m modules.data_sync sync
 
 # 同步单只股票K线 + 指标缓存
@@ -121,8 +134,8 @@ python -m pytest tests/ -v
 # 分析一只股票
 python -m modules.cli analyze 600487.SH
 
-# 回测一个策略
-python -m modules.cli backtest 600487.SH --strategy b1
+# 选股扫描
+python -m modules.cli screen --strategy B1 --limit 20
 ```
 
 ---
@@ -137,46 +150,29 @@ python -m modules.cli backtest 600487.SH --strategy b1
 # 完整分析（技术指标 + 战法识别 + 信号判断）
 python -m modules.cli analyze 600487.SH
 
-# 输出示例：
-# 股票: 亨通光电 (600487.SH)
-# 最新: 22.81 (2026-05-28), 涨跌: -1.76%
-# 指标: KDJ(K=58.5, D=59.2, J=57.2), MACD(DIF=0.31, DEA=0.33)
-# 战法: B1_AVAILABLE, B2_CONFIRMED
-# 信号: BUY_ZONE
-```
-
-### 策略回测
-
-```bash
-# 单策略回测
-python -m modules.cli backtest 600487.SH --strategy b1
-
-# 多策略组合回测
-python -m modules.cli backtest 600487.SH --strategy all
-
-# 输出示例：
-# 策略: ALL_COMBINED
-# 信号数: 16
-# 胜率: 62.5%
-# 平均收益: 5.12%
-# 夏普比率: 1.34
+# 指定分析天数
+python -m modules.cli analyze 600487.SH --days 60
 ```
 
 ### 选股扫描
 
 ```bash
-# 默认扫描前 500 只（性能保护）
-python -m modules.cli screener
+# B1 选股
+python -m modules.cli screen --strategy B1 --limit 20
 
-# 全量扫描
-python -m modules.cli screener --max-stocks 0
+# 完美图形
+python -m modules.cli screen --strategy 完美图形 --limit 10
 
-# 指定策略
-python -m modules.cli screener --strategy b1
+# 超级 B1
+python -m modules.cli screen --strategy 超级B1 --limit 10
 
-# P2 指标选股（v2.4-fix 新增）
+# 建仓波选股
 python -m modules.cli screen --strategy 建仓波 --limit 20
+
+# 吸筹阶段
 python -m modules.cli screen --strategy 吸筹 --limit 20
+
+# 安全标的
 python -m modules.cli screen --strategy 安全 --limit 20
 ```
 
@@ -196,6 +192,16 @@ python -m modules.cli watchlist scan
 python -m modules.cli watchlist remove 600487.SH
 ```
 
+### 持仓诊断
+
+```bash
+# 诊断单只股票
+python -m modules.cli diagnose 600487.SH
+
+# 指定诊断天数
+python -m modules.cli diagnose 600487.SH --days 100
+```
+
 ### 数据同步
 
 ```bash
@@ -205,8 +211,11 @@ python -m modules.data_sync status
 # 同步单只股票
 python -m modules.data_sync sync --ts_code 600487.SH --days 120
 
-# 批量同步（全部股票）
-python -m modules.data_sync sync --days 365
+# 同步并计算指标缓存
+python -m modules.data_sync sync --ts_code 600487.SH --days 120 --indicators
+
+# 同步 Tushare 官方指标（用于 diff 验证）
+python -m modules.data_sync stk-factor --ts_code 600487.SH --days 365
 ```
 
 ---
@@ -219,9 +228,9 @@ python -m modules.data_sync sync --days 365
 from modules.indicators import analyze_stock
 
 result = analyze_stock("600487.SH", days=60)
-print(f"收盘价: {result['close']}")
-print(f"信号: {result['signals']}")
-print(f"战法: {result['strategies']}")
+print(f"J={result.j:.1f}, MACD DIF={result.dif:.2f}")
+print(f"B1={result.is_b1}, B2={result.is_b2}")
+print(f"信号: {result.signal}")
 ```
 
 ### 战法识别
@@ -231,7 +240,7 @@ from modules.strategies import detect_all_strategies
 
 signals = detect_all_strategies("600487.SH", days=60)
 for s in signals:
-    print(f"{s['date']}: {s['strategy']} @ {s['price']}")
+    print(f"{s.trade_date}: {s.strategy} 置信度={s.confidence} 操作={s.action}")
 ```
 
 ### 策略回测
@@ -260,21 +269,30 @@ portfolio_result = backtest_portfolio(
 ### 选股
 
 ```python
-from modules.screener import run_screener
+from modules.screener import screen_stocks
 
-results = run_screener(max_stocks=500, strategy="b1")
-for r in results[:10]:
-    print(f"{r['ts_code']}: 评分={r['total_score']}, 信号={r['signal']}")
+results = screen_stocks(criteria="b1", max_stocks=50)
+for r in sorted(results, key=lambda x: x.score, reverse=True)[:10]:
+    print(f"{r.ts_code}({r.name}): 总分={r.score}")
 ```
 
 ### 持股诊断
 
 ```python
-from modules.portfolio_diagnosis import diagnose_portfolio
+from modules.portfolio_diagnosis import diagnose_stock, format_report
 
-diagnosis = diagnose_portfolio(["600487.SH", "000001.SZ"])
-for d in diagnosis:
-    print(f"{d['name']}: 状态={d['status']}, 建议={d['action']}")
+report = diagnose_stock("600487.SH", days=100)
+print(format_report(report))
+```
+
+### 获取 K 线数据
+
+```python
+from modules.indicators import get_kline_data
+
+klines = get_kline_data("600487.SH", days=60)
+for k in klines[-5:]:
+    print(f"{k.trade_date}: 开{k.open} 高{k.high} 低{k.low} 收{k.close} 量{k.vol}")
 ```
 
 ---
@@ -296,6 +314,8 @@ zettaranc-skill/
 ├── README.md                   # 本文件
 ├── CHANGELOG.md                # 版本变更日志
 ├── AGENTS.md                   # AI Agent 开发指南
+├── docs/
+│   └── USER_GUIDE.md           # 详细使用手册与操作手册
 ├── .env / .env.example         # 本地配置
 ├── data/
 │   └── stock_data.db           # SQLite 数据库（8张表）
@@ -332,12 +352,12 @@ zettaranc-skill/
 |------|------|---------|
 | `stock_basic` | 股票基本信息 | ts_code, name, industry, market |
 | `daily_kline` | 日线 K 线 | open, high, low, close, vol, pct_chg |
-| `indicator_cache` | 技术指标缓存 | KDJ, MACD, BBI, MA, RSI, WR, 布林带, 双线, 砖形图, DMI, 量比, 信号 |
+| `indicator_cache` | 技术指标缓存 | KDJ, MACD, BBI, MA, RSI, WR, 布林带, 双线, 砖形图, DMI, 量比 |
 | `moneyflow` | 资金流向 | 大小单买卖金额, 净流入 |
-| `financial_data` | 财务报表 | PE, PB, 营收, 净利润 |
+| `financial_data` | 财务报表 | revenue, net_profit, total_assets, pe, pb, ps |
 | `trade_signals` | 交易信号记录 | signal_type, signal_score, signal_price |
 | `trade_records` | 交易记录 | action, price, quantity, reason, zg_review |
-| `sync_log` | 数据同步日志 | data_type, last_date, status |
+| `watchlist` | 自选股观察池 | ts_code, name, tags, add_date |
 
 ### 关键设计原则
 
@@ -421,13 +441,31 @@ zettaranc ❯ 辞职全职炒股？兄弟，我劝你慎重。
 
 | 版本 | 核心变化 |
 |------|---------|
-| v2.4 | indicators/ 包拆分、组合回测框架、CLI 工具、缓存层打通 |
-| v2.3 | 持股诊断、观察池、S1/S2/S3 逃顶、战法补完 |
-| v2.2 | 15 篇新增语料、5 份调研报告、考试规则验证 |
-| v2.1 | 随堂测试复盘、Python 数据层 + LLM 点评层架构 |
-| v2.0 | Tushare 真实数据接入、60+ 指标、30+ 战法 |
+| **v2.7.0** | 数据层充实（真实财报/PE/PB/PS/资金流全量入库）、SAT/UAT 测试体系、策略 DB 路径修复、使用手册 |
+| **v2.6.0** | P2 核心模块（三波理论/麒麟会四阶段）、screener 新增选股条件 |
+| **v2.5.0** | P0/P1 指标补全（滴滴/金叉空/出货五式/灾后重建）、工程化补完（pyproject.toml / dotenv 统一 / Bug 修复） |
+| **v2.4.0** | indicators 拆分子模块 + 缓存层 + CLI 工具 + 回测框架 + 递推修复 |
+| **v2.3.0** | 持股诊断、观察池、S1/S2/S3 逃顶、战法补完 |
+| **v2.2.0** | 15 篇新增语料、5 份调研报告、考试规则验证 |
+| **v2.1.0** | 随堂测试复盘、Python 数据层 + LLM 点评层架构 |
+| **v2.0.0** | Tushare 真实数据接入、60+ 指标、30+ 战法 |
 
 详见 [CHANGELOG.md](CHANGELOG.md)。
+
+---
+
+## 使用手册
+
+详细的使用手册与操作指南请查看 [docs/USER_GUIDE.md](docs/USER_GUIDE.md)，包含：
+
+- 环境配置详解
+- 数据库初始化与数据同步
+- 六大核心功能完整操作手册
+- Python API 调用示例
+- 技术指标体系速查
+- 战法体系速查
+- 日常操作流程（每日/每周/每月）
+- 常见问题 Q&A
 
 ---
 
