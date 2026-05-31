@@ -1,14 +1,19 @@
 from typing import List, Dict, Optional
 from .core import StrategyType, StrategySignal, Priority, Action, _calc_kdj
 
-def detect_changan(klines: List[Dict], index: int) -> Optional[StrategySignal]:
+def detect_changan(klines: List[Dict], index: int,
+                   kirin_context: Optional[Dict] = None) -> Optional[StrategySignal]:
     """
-    检测长安战法（胜率75%）
+    检测长安战法（已升级 MDC 验证 + 麒麟背景）
 
     三条件：
     1. 第一天为B1（J<-13）
     2. 第二天为放量长阳，J值拐头
     3. 第三天为分歧转一致且缩半量
+
+    MDC 验证项：
+    - 第二天放量时，大单净流入比例 > 5% (+15%)
+    - 整体处于“拉升”阶段 (+10%)
     """
     if index < 3:
         return None
@@ -17,17 +22,17 @@ def detect_changan(klines: List[Dict], index: int) -> Optional[StrategySignal]:
     day2 = klines[index-1]
     day3 = klines[index]
 
-    # 第一天：B1（J<-13）
+    # 1. 第一天：B1（J<-13）
     k1, d1, j1 = _calc_kdj(klines[:index-1])
     if j1 >= -13:
         return None
 
-    # 第二天：放量长阳，J拐头
+    # 2. 第二天：放量长阳，J拐头
     k2, d2, j2 = _calc_kdj(klines[:index])
     if not (day2['pct_chg'] >= 4 and day2['is_beidou'] and j2 > j1):
         return None
 
-    # 第三天：分歧转一致，缩半量
+    # 3. 第三天：分歧转一致，缩半量
     pct_chg = day3['pct_chg']
     amplitude = (day3['high'] - day3['low']) / day3['prev_close'] * 100
     is_half_vol = day3['vol'] <= day2['vol'] * 0.5
@@ -35,18 +40,31 @@ def detect_changan(klines: List[Dict], index: int) -> Optional[StrategySignal]:
     if not (0 < pct_chg < 2 and amplitude < 7 and is_half_vol):
         return None
 
+    # 4. MDC 评分
+    confidence = 0.75
+    mdc_details = []
+    
+    # 验证第二天的资金流 (真假突破)
+    if day2.get('large_inflow', 0) > day2.get('large_outflow', 0):
+        inflow_ratio = (day2['large_inflow'] - day2['large_outflow']) / day2['amount'] if day2['amount'] > 0 else 0
+        if inflow_ratio > 0.05:
+            confidence += 0.15
+            mdc_details.append(f"Day2主力大单强力流入({inflow_ratio*100:.1f}%)")
+            
+    if kirin_context and kirin_context.get('stage') == '拉升':
+        confidence += 0.10
+        mdc_details.append("处于主力拉升期")
+
     return StrategySignal(
         ts_code=day3['ts_code'],
         trade_date=day3['trade_date'],
         strategy=StrategyType.CHANGAN,
-        confidence=0.75,
-        description=f"长安战法确认 胜率75%",
+        confidence=round(min(confidence, 0.98), 2),
+        description=f"长安战法确认(胜率75%) " + ", ".join(mdc_details),
         details={
-            'j1': j1,
-            'j2': j2,
+            'j1': j1, 'j2': j2,
             'day2_pct': day2['pct_chg'],
-            'day3_pct': pct_chg,
-            'amplitude': amplitude,
+            'mdc': mdc_details,
         },
         action=Action.BUY.value,
         stop_loss=day3['low'],
@@ -95,9 +113,10 @@ def detect_sifen_zhiyi_sanyin(klines: List[Dict], index: int) -> Optional[Strate
     return None
 
 
-def detect_nana(klines: List[Dict], index: int) -> Optional[StrategySignal]:
+def detect_nana(klines: List[Dict], index: int,
+                kirin_context: Optional[Dict] = None) -> Optional[StrategySignal]:
     """
-    检测娜娜图形
+    检测娜娜图形（已升级 MDC 验证）
 
     四条件同时满足：
     1. 连续放量上涨
@@ -138,16 +157,30 @@ def detect_nana(klines: List[Dict], index: int) -> Optional[StrategySignal]:
     if j >= 0:
         return None
 
+    # MDC 验证
+    confidence = 0.85
+    mdc_details = []
+    
+    today = klines[index]
+    if today.get('boll_lower') and today['close'] <= today['boll_lower'] * 1.05:
+        confidence += 0.10
+        mdc_details.append("回踩布林下轨支撑")
+        
+    if kirin_context and kirin_context.get('stage') in ('吸筹', '拉升'):
+        confidence += 0.05
+        mdc_details.append(f"处于主力{kirin_context['stage']}期")
+
     return StrategySignal(
         ts_code=klines[index]['ts_code'],
         trade_date=klines[index]['trade_date'],
         strategy=StrategyType.NANA,
-        confidence=0.85,
-        description=f"娜娜图形 J={j:.2f} 连续放量涨+缩量回调",
+        confidence=round(min(confidence, 0.98), 2),
+        description=f"娜娜图形 J={j:.2f} " + ", ".join(mdc_details),
         details={
             'j': j,
             'rise_count': rise_count,
             'suoliang_count': suoliang_count,
+            'mdc': mdc_details,
         },
         action=Action.BUY.value,
         stop_loss=klines[index]['low'],

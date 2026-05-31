@@ -128,14 +128,19 @@ def detect_all_strategies(ts_code: str, days: int = 120) -> List[StrategySignal]
         dif_list = _calc_dif(klines)
 
         # 遍历每一天检测战法
-        for i in range(10, len(klines)):
+        from ..indicators import detect_kirin_stage
+        
+        for i in range(20, len(klines)):
+            # 获取当前切片的麒麟阶段 (Context)
+            kirin_context = detect_kirin_stage(daily_klines[:i+1])
+            
             # B1 检测
-            signal = detect_b1(klines, i)
+            signal = detect_b1(klines, i, kirin_context=kirin_context)
             if signal:
                 signals.append(signal)
 
             # B2 检测
-            signal = detect_b2(klines, i)
+            signal = detect_b2(klines, i, kirin_context=kirin_context)
             if signal:
                 signals.append(signal)
 
@@ -150,7 +155,7 @@ def detect_all_strategies(ts_code: str, days: int = 120) -> List[StrategySignal]
                 signals.append(signal)
 
             # 长安战法
-            signal = detect_changan(klines, i)
+            signal = detect_changan(klines, i, kirin_context=kirin_context)
             if signal:
                 signals.append(signal)
 
@@ -160,7 +165,7 @@ def detect_all_strategies(ts_code: str, days: int = 120) -> List[StrategySignal]
                 signals.append(signal)
 
             # 娜娜图形
-            signal = detect_nana(klines, i)
+            signal = detect_nana(klines, i, kirin_context=kirin_context)
             if signal:
                 signals.append(signal)
 
@@ -185,7 +190,7 @@ def detect_all_strategies(ts_code: str, days: int = 120) -> List[StrategySignal]
                 signals.append(signal)
 
             # S1 逃顶
-            signal = detect_s1(klines, i)
+            signal = detect_s1(klines, i, kirin_context=kirin_context)
             if signal:
                 signals.append(signal)
 

@@ -173,6 +173,8 @@ def get_kline_data(ts_code: str, days: int = 120) -> List[Dict]:
             'boll_lower': row['boll_lower'],
             'rsi6': row['rsi6'],
             'adx': row['adx'],
+            'dmi_plus': row['dmi_plus'],
+            'dmi_minus': row['dmi_minus'],
             'net_mf': row['net_mf'],
             'large_inflow': (row['buy_lg_amount'] or 0) + (row['buy_elg_amount'] or 0),
             'large_outflow': (row['sell_lg_amount'] or 0) + (row['sell_elg_amount'] or 0),

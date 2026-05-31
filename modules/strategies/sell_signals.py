@@ -2,61 +2,86 @@ from typing import List, Dict, Optional
 from .core import StrategyType, StrategySignal, Priority, Action, _klines_dict_to_daily
 from ..indicators import detect_four_brick_system
 
-def detect_s1(klines: List[Dict], index: int) -> Optional[StrategySignal]:
+def detect_s1(klines: List[Dict], index: int,
+              kirin_context: Optional[Dict] = None) -> Optional[StrategySignal]:
     """
-    检测 S1 初级逃顶信号
+    检测 S1 初级逃顶信号（已升级 MDC 验证 + 麒麟阶段背景）
 
-    触发条件：
+    核心触发：
     1. 近期流畅上涨（20日内涨幅 > 15%，位于高位）
-    2. 丑陋大绿帽：放量阴线或假阴真阳，收盘价接近当日低点
-    3. 量能异常（放量 > 前日 1.5 倍）
+    2. 丑陋大绿帽：放量阴线或假阴真阳
+    3. 收盘价接近当日低点
+
+    MDC 验证项：
+    - 处于麒麟会“派发”阶段 (+20%)
+    - 主力大单大幅净流出 (+15%)
+    - 跌破布林中轨 (-10%)
     """
     if index < 20:
         return None
 
     today = klines[index]
+    yesterday = klines[index - 1]
 
-    # 近期高点
+    # 1. 流畅上涨与高位判断
     recent_high = max(k['high'] for k in klines[index - 19:index + 1])
     recent_low_20 = min(k['low'] for k in klines[index - 19:index])
-
-    # 流畅上涨条件：20日内涨幅 > 15%
     up_pct = (recent_high - recent_low_20) / recent_low_20
+    
     if up_pct < 0.15:
         return None
-
-    # 当前位于高位（距20日高点 < 10%）
     if today['close'] < recent_high * 0.90:
         return None
 
-    # 丑陋大绿帽：放量阴线 或 假阴真阳
+    # 2. 丑陋大绿帽形态
     is_ugly = (
         today['is_fangliang_yinxian'] or
-        (today['is_jiayin'] and today['vol'] > klines[index - 1]['vol'] * 1.5)
+        (today['is_jiayin'] and today['vol'] > yesterday['vol'] * 1.5)
     )
     if not is_ugly:
         return None
 
-    # 收盘价接近当日低点（绿帽实体大）
     day_range = today['high'] - today['low']
-    if day_range > 0:
-        close_position = (today['close'] - today['low']) / day_range
-    else:
-        close_position = 0.5
-
+    close_position = (today['close'] - today['low']) / day_range if day_range > 0 else 0.5
     if close_position > 0.3:
         return None
+
+    # 3. MDC 评分升级
+    confidence = 0.60
+    mdc_details = []
+
+    # 麒麟阶段背景验证
+    if kirin_context:
+        stage = kirin_context.get('stage')
+        if stage == '派发':
+            confidence += 0.25
+            mdc_details.append("处于主力派发期(高危)")
+        elif stage == '拉升':
+            confidence -= 0.10 # 拉升期的第一次大阴线可能是洗盘
+            mdc_details.append("处于拉升中继(警惕洗盘)")
+
+    # 资金流验证
+    outflow_ratio = (today.get('large_outflow', 0) - today.get('large_inflow', 0)) / today['amount'] if today['amount'] > 0 else 0
+    if outflow_ratio > 0.05:
+        confidence += 0.15
+        mdc_details.append(f"主力大单强力撤离({outflow_ratio*100:.1f}%)")
+
+    # 布林验证
+    if today.get('boll_mid') and yesterday['close'] > yesterday['boll_mid'] and today['close'] < today['boll_mid']:
+        confidence += 0.10
+        mdc_details.append("跌破布林中轨(趋势走坏)")
 
     return StrategySignal(
         ts_code=today['ts_code'],
         trade_date=today['trade_date'],
         strategy=StrategyType.S1,
-        confidence=0.85,
-        description=f"S1逃顶 20日涨{up_pct*100:.0f}% 放量阴线 收盘距低点{close_position*100:.0f}%",
+        confidence=round(min(max(confidence, 0.1), 0.98), 2),
+        description=f"S1逃顶(丑陋大绿帽) " + ", ".join(mdc_details),
         details={
             'up_pct': round(up_pct * 100, 2),
             'close_position': round(close_position, 2),
-            'vol_ratio': round(today['vol'] / klines[index - 1]['vol'], 2) if klines[index - 1]['vol'] > 0 else 0,
+            'mdc': mdc_details,
+            'kirin_stage': kirin_context.get('stage') if kirin_context else None
         },
         action="SELL",
         stop_loss=today['low'],

@@ -1,9 +1,10 @@
 from typing import List, Dict, Optional
 from .core import StrategyType, StrategySignal, Priority, Action, _calc_kdj, _calc_bbi
 
-def detect_b1(klines: List[Dict], index: int) -> Optional[StrategySignal]:
+def detect_b1(klines: List[Dict], index: int, 
+              kirin_context: Optional[Dict] = None) -> Optional[StrategySignal]:
     """
-    检测 B1 买点（已升级 MDC 多维验证）
+    检测 B1 买点（已升级 MDC 多维验证 + 麒麟阶段背景）
 
     B1 核心条件：
     1. J < -10
@@ -11,9 +12,13 @@ def detect_b1(klines: List[Dict], index: int) -> Optional[StrategySignal]:
     3. 非绿砖状态（连续下跌 < 4天）
 
     MDC 加分项：
+    - 价格处于麒麟会“吸筹”阶段 (+20%)
+    - 价格处于麒麟会“回落”阶段末期 (+10%)
+    - 处于“派发”阶段 (-30%, 一票否决)
     - 价格触及或低于布林下轨 (+15%)
     - 主力大单净流入为正 (+10%)
     - RSI6 < 20 (极度超卖, +10%)
+    - ADX 高位动能竭尽 (+10%)
     """
     if index < 10:
         return None
@@ -33,26 +38,44 @@ def detect_b1(klines: List[Dict], index: int) -> Optional[StrategySignal]:
 
     # 2. 基础置信度
     is_suoliang = today['is_suoliang']
-    confidence = 0.6 + (0.1 if is_suoliang else 0)
+    confidence = 0.5 + (0.1 if is_suoliang else 0)
     
     mdc_details = []
 
-    # 3. MDC 验证 - 布林带 (超跌验证)
+    # 3. 麒麟阶段背景验证 (Contextual Validation)
+    if kirin_context:
+        stage = kirin_context.get('stage')
+        if stage == '吸筹':
+            confidence += 0.20
+            mdc_details.append("处于主力吸筹期(高安全)")
+        elif stage == '回落':
+            confidence += 0.10
+            mdc_details.append("处于回落寻底期")
+        elif stage == '派发':
+            confidence -= 0.30 # 处于派发阶段的 B1 极度危险
+            mdc_details.append("处于主力派发期(高风险)")
+
+    # 4. MDC 验证 - 布林带 (超跌验证)
     if today.get('boll_lower') and today['close'] <= today['boll_lower'] * 1.02:
         confidence += 0.15
         mdc_details.append("触及布林下轨(超跌)")
 
-    # 4. MDC 验证 - 资金流 (主力意图)
+    # 5. MDC 验证 - 资金流 (主力意图)
     if today.get('large_inflow', 0) > today.get('large_outflow', 0):
         confidence += 0.10
         mdc_details.append("主力大单净流入")
         
-    # 5. MDC 验证 - RSI (极端超卖)
+    # 6. MDC 验证 - RSI (极端超卖)
     if today.get('rsi6', 50) < 25:
         confidence += 0.05
         mdc_details.append("RSI极端超卖")
 
-    confidence = min(confidence, 0.95)
+    # 7. MDC 验证 - DMI (趋势动能)
+    if today.get('adx', 0) > 40:
+        confidence += 0.10
+        mdc_details.append(f"ADX高位动能竭尽({today['adx']:.1f})")
+
+    confidence = max(0.1, min(confidence, 0.98))
 
     return StrategySignal(
         ts_code=today['ts_code'],
@@ -65,16 +88,18 @@ def detect_b1(klines: List[Dict], index: int) -> Optional[StrategySignal]:
             'is_suoliang': is_suoliang,
             'yin_count_4': yin_count,
             'price': today['close'],
-            'mdc': mdc_details
+            'mdc': mdc_details,
+            'kirin_stage': kirin_context.get('stage') if kirin_context else None
         },
         action=Action.BUY.value,
         stop_loss=today['low'],
         priority=Priority.OPPORTUNITY)
 
 
-def detect_b2(klines: List[Dict], index: int) -> Optional[StrategySignal]:
+def detect_b2(klines: List[Dict], index: int,
+              kirin_context: Optional[Dict] = None) -> Optional[StrategySignal]:
     """
-    检测 B2 买点（已升级 MDC 多维验证）
+    检测 B2 买点（已升级 MDC 多维验证 + 麒麟阶段背景）
 
     B2 条件（B1后的确认信号）：
     1. 前几日有B1（J<-10）
@@ -82,8 +107,12 @@ def detect_b2(klines: List[Dict], index: int) -> Optional[StrategySignal]:
     3. J值拐头（>-10）
 
     MDC 加分项：
+    - 处于麒麟会“拉升”阶段 (+20%)
+    - 处于麒麟会“吸筹”末期突破 (+10%)
+    - 处于麒麟会“派发”阶段 (-40%, 高位诱多)
     - 有效突破布林中轨 (+15%)
-    - 主力大单净流入比例高 (+15%)
+    - 主力大单强力净流入比例高 (+15%)
+    - DMI 趋势金叉 (+10%)
     - 布林开口向上 (+10%)
     """
     if index < 15:
@@ -113,10 +142,23 @@ def detect_b2(klines: List[Dict], index: int) -> Optional[StrategySignal]:
 
     # 2. 基础置信度
     k, d, j = _calc_kdj(klines[:index+1])
-    confidence = 0.70
+    confidence = 0.60
     mdc_details = []
 
-    # 3. MDC 验证 - 布林带 (突破验证)
+    # 3. 麒麟阶段背景验证
+    if kirin_context:
+        stage = kirin_context.get('stage')
+        if stage == '拉升':
+            confidence += 0.20
+            mdc_details.append("处于主力拉升期(顺势)")
+        elif stage == '吸筹':
+            confidence += 0.10
+            mdc_details.append("处于吸筹突破期")
+        elif stage == '派发':
+            confidence -= 0.40 # 派发阶段的假突破非常多
+            mdc_details.append("处于主力派发期(假突破风险)")
+
+    # 4. MDC 验证 - 布林带 (突破验证)
     if today.get('boll_mid') and yesterday['close'] < yesterday['boll_mid'] and today['close'] > today['boll_mid']:
         confidence += 0.15
         mdc_details.append("突破布林中轨(走强)")
@@ -129,7 +171,7 @@ def detect_b2(klines: List[Dict], index: int) -> Optional[StrategySignal]:
             confidence += 0.05
             mdc_details.append("布林开口向上")
 
-    # 4. MDC 验证 - 资金流 (强力买入)
+    # 5. MDC 验证 - 资金流 (强力买入)
     total_amount = today['amount']
     net_inflow = today.get('large_inflow', 0) - today.get('large_outflow', 0)
     if net_inflow > 0 and total_amount > 0:
@@ -137,8 +179,14 @@ def detect_b2(klines: List[Dict], index: int) -> Optional[StrategySignal]:
         if inflow_ratio > 0.05: # 大单净占比 > 5%
             confidence += 0.15
             mdc_details.append(f"主力大单强力净流入({inflow_ratio*100:.1f}%)")
+            
+    # 6. MDC 验证 - DMI (金叉验证)
+    if today.get('dmi_plus') and yesterday.get('dmi_minus'):
+        if yesterday['dmi_plus'] < yesterday['dmi_minus'] and today['dmi_plus'] > today['dmi_minus']:
+            confidence += 0.10
+            mdc_details.append("DMI趋势金叉")
 
-    confidence = min(confidence, 0.98)
+    confidence = max(0.1, min(confidence, 0.98))
 
     return StrategySignal(
         ts_code=today['ts_code'],
@@ -151,7 +199,8 @@ def detect_b2(klines: List[Dict], index: int) -> Optional[StrategySignal]:
             'pct_chg': pct_chg,
             'is_beidou': is_beidou,
             'price': today['close'],
-            'mdc': mdc_details
+            'mdc': mdc_details,
+            'kirin_stage': kirin_context.get('stage') if kirin_context else None
         },
         action=Action.BUY.value,
         stop_loss=today['low'],
