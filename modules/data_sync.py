@@ -11,7 +11,6 @@ import threading
 import concurrent.futures
 from datetime import datetime, timedelta
 from typing import List, Optional, Dict, Any
-from pathlib import Path
 
 try:
     import tushare as ts
@@ -21,7 +20,6 @@ except ImportError:
 # dotenv 加载已移至 modules/__init__.py（包级别一次性加载，override=True）
 
 from .database import get_connection, get_db_path
-from .tushare_client import TushareClient
 
 logger = logging.getLogger(__name__)
 
@@ -35,23 +33,38 @@ class DataSyncer:
 
     def __init__(self, token: Optional[str] = None):
         self.token = token or os.environ.get("TUSHARE_TOKEN")
-        # 仅在 JNB 模式下强制检查 Tushare 配置
-        data_mode = os.getenv("DATA_MODE", "websearch")
-        if data_mode == 'jnb':
-            if not self.token:
-                raise ValueError(
-                    "JNB 模式下未设置 TUSHARE_TOKEN，请检查 .env 文件。"
-                )
-            if not TUSHARE_API_URL:
-                raise ValueError(
-                    "JNB 模式下未设置 TUSHARE_API_URL，请在 .env 中配置中转 API 地址。\n"
-                    "示例：TUSHARE_API_URL=https://tt.xiaodefa.cn"
-                )
+        self.data_mode = os.getenv("DATA_MODE", "websearch")
 
-        # 初始化 Tushare
-        ts.set_token(self.token)
-        self.pro = ts.pro_api()
-        self.pro._DataApi__http_url = TUSHARE_API_URL
+        # 免 token 数据源（akshare 现拉 / qcore 读本地数据湖）。
+        # 两者接口一致（get_stock_basic / get_daily，返回 tushare schema），
+        # 统一挂在 self.source_client 上，下游分支只需判断它是否为 None。
+        self.source_client = None
+
+        if self.data_mode == 'akshare':
+            from .akshare_client import AkshareClient
+            self.source_client = AkshareClient()
+            self.pro = None
+        elif self.data_mode == 'qcore':
+            from .qcore_lake_client import QcoreLakeClient
+            self.source_client = QcoreLakeClient()
+            self.pro = None
+        else:
+            # 仅在 JNB 模式下强制检查 Tushare 配置
+            if self.data_mode == 'jnb':
+                if not self.token:
+                    raise ValueError(
+                        "JNB 模式下未设置 TUSHARE_TOKEN，请检查 .env 文件。"
+                    )
+                if not TUSHARE_API_URL:
+                    raise ValueError(
+                        "JNB 模式下未设置 TUSHARE_API_URL，请在 .env 中配置中转 API 地址。\n"
+                        "示例：TUSHARE_API_URL=https://tt.xiaodefa.cn"
+                    )
+
+            # 初始化 Tushare
+            ts.set_token(self.token)
+            self.pro = ts.pro_api()
+            self.pro._DataApi__http_url = TUSHARE_API_URL
 
         # 限流控制：120次/分钟
         self.min_interval = 60 / 120
@@ -109,12 +122,15 @@ class DataSyncer:
         """
         logger.info("开始同步股票基本信息...")
         try:
-            self._rate_limit("stock_basic")
-            df = self.pro.stock_basic(
-                exchange='',
-                list_status='L',
-                fields='ts_code,name,area,industry,market,list_date,is_hs'
-            )
+            if self.source_client is not None:
+                df = self.source_client.get_stock_basic()
+            else:
+                self._rate_limit("stock_basic")
+                df = self.pro.stock_basic(
+                    exchange='',
+                    list_status='L',
+                    fields='ts_code,name,area,industry,market,list_date,is_hs'
+                )
 
             if df is None or len(df) == 0:
                 logger.warning("获取股票基本信息失败")
@@ -123,7 +139,10 @@ class DataSyncer:
             # 填充 NaN 以免插入失败，且保留必要的列
             df = df[['ts_code', 'name', 'area', 'industry', 'market', 'list_date', 'is_hs']].fillna('')
             with get_connection() as conn:
-                df.to_sql('stock_basic', conn, if_exists='append', index=False, method='multi')
+                # chunksize 限制每条 INSERT 的绑定参数数量，避免 SQLite
+                # "too many SQL variables"（上限 32766；7 列 × 1000 行 = 7000，安全）
+                df.to_sql('stock_basic', conn, if_exists='append', index=False,
+                          method='multi', chunksize=1000)
 
             self._log_sync("stock_basic", None, datetime.now().strftime("%Y%m%d"), "success")
             logger.info(f"股票基本信息同步完成，共 {len(df)} 只")
@@ -164,14 +183,17 @@ class DataSyncer:
             end_date = datetime.now().strftime("%Y%m%d")
 
         try:
-            self._rate_limit("daily_kline")
-            df = ts.pro_bar(
-                ts_code=ts_code,
-                start_date=start_date,
-                end_date=end_date,
-                adj='qfq',
-                api=self.pro,
-            )
+            if self.source_client is not None:
+                df = self.source_client.get_daily(ts_code, start_date, end_date)
+            else:
+                self._rate_limit("daily_kline")
+                df = ts.pro_bar(
+                    ts_code=ts_code,
+                    start_date=start_date,
+                    end_date=end_date,
+                    adj='qfq',
+                    api=self.pro,
+                )
 
             if df is None or len(df) == 0:
                 return 0
@@ -486,6 +508,9 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 
         Returns:
             更新条数
         """
+        if self.pro is None:
+            logger.warning(f"stk_factor 仅 Tushare(jnb) 模式可用，当前为 {self.data_mode} 模式，跳过")
+            return 0
         try:
             if start_date is None:
                 start_date = (datetime.now() - timedelta(days=365)).strftime("%Y%m%d")
@@ -630,6 +655,9 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 
         Returns:
             更新条数
         """
+        if self.pro is None:
+            logger.warning(f"daily_basic 仅 Tushare(jnb) 模式可用，当前为 {self.data_mode} 模式，跳过")
+            return 0
         try:
             self.ensure_daily_basic_columns()
             self._rate_limit("daily_basic")
@@ -739,6 +767,9 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 
         Returns:
             更新条数
         """
+        if self.pro is None:
+            logger.warning(f"moneyflow 仅 Tushare(jnb) 模式可用，当前为 {self.data_mode} 模式，跳过")
+            return 0
         try:
             self._rate_limit("moneyflow")
             df = self.pro.moneyflow(ts_code=ts_code, trade_date=trade_date)

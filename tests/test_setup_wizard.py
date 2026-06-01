@@ -24,27 +24,28 @@ class TestCheckEnvExists:
 
 
 class TestWriteEnvFile:
-    def test_write_websearch_mode(self):
-        """写普通小万模式"""
+    def test_write_websearch_mode(self, tmp_path):
+        """写普通小万模式（写入临时路径，避免覆盖项目根 .env）"""
         # 先清除已有的 DATA_MODE
         if "DATA_MODE" in os.environ:
             del os.environ["DATA_MODE"]
 
-        path = write_env_file(mode=MODE_NORMAL)
+        path = write_env_file(mode=MODE_NORMAL, env_path=tmp_path / ".env")
         assert Path(path).exists()
         assert os.environ.get("DATA_MODE") == MODE_NORMAL
 
         content = Path(path).read_text(encoding="utf-8")
         assert "DATA_MODE=websearch" in content
 
-    def test_write_jnb_mode(self):
-        """写 JNB 模式"""
+    def test_write_jnb_mode(self, tmp_path):
+        """写 JNB 模式（写入临时路径，避免覆盖项目根 .env）"""
         if "DATA_MODE" in os.environ:
             del os.environ["DATA_MODE"]
         if "TUSHARE_TOKEN" in os.environ:
             del os.environ["TUSHARE_TOKEN"]
 
-        path = write_env_file(token="test_token_12345", mode=MODE_JNB)
+        path = write_env_file(token="test_token_12345", mode=MODE_JNB,
+                              env_path=tmp_path / ".env")
         assert Path(path).exists()
         assert os.environ.get("DATA_MODE") == MODE_JNB
         assert os.environ.get("TUSHARE_TOKEN") == "test_token_12345"
