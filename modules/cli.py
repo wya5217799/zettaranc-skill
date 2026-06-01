@@ -22,7 +22,7 @@ def cmd_analyze(args):
     from modules.indicators import analyze_stock
     from modules.indicators.data_layer import get_kline_data, DailyData
     from modules.strategies import detect_all_strategies, StrategyType
-    from modules.portfolio_diagnosis import diagnose_stock
+    from modules.portfolio_diagnosis import diagnose_stock, format_report
 
     ts_code = args.ts_code
     days = args.days
@@ -109,48 +109,42 @@ def cmd_analyze(args):
     # 4. 诊断
     print("\n【持仓诊断】")
     diagnosis = diagnose_stock(ts_code, days=days)
-    print(diagnosis)
+    print(format_report(diagnosis))
 
 
 def cmd_screen(args):
     """筛选股票"""
-    from modules.screener import StockScore
-    from modules.database import get_connection
+    from modules.screener import screen_stocks
+
+    # CLI --strategy 选项 → screen_stocks criteria 映射
+    strategy_map = {
+        'B1': 'b1',
+        'B2': 'b2_breakout',
+        '完美图形': 'perfect',
+        '超级B1': 'super_b1',
+        '建仓波': 'build_wave',
+        '吸筹': 'xishou',
+        '安全': 'safe',
+    }
+
+    strategy = args.strategy
+    limit = args.limit
+    criteria = strategy_map.get(strategy, 'b1')
+    scan = getattr(args, 'scan', 500)
 
     print(f"\n{'='*60}")
     print(f"股票筛选")
     print(f"{'='*60}")
+    print(f"\n筛选条件: {strategy} (criteria={criteria})  扫描上限: {scan} 只")
 
-    strategy = args.strategy
-    limit = args.limit
+    # 扫描 scan 只全市场股票，输出仅保留评分最高的 limit 条
+    results = screen_stocks(criteria=criteria, max_stocks=scan)
 
-    # 从数据库中获取有K线数据的股票列表
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT DISTINCT ts_code FROM daily_kline LIMIT ?", (limit * 5,))
-        ts_codes = [row['ts_code'] for row in cursor.fetchall()]
-
-    results = []
-    for ts_code in ts_codes:
-        try:
-            score = StockScore(ts_code)
-            if strategy == 'B1' and score.b1_score >= 3:
-                results.append((ts_code, score.b1_score, 'B1'))
-            elif strategy == 'B2' and score.is_b2:
-                results.append((ts_code, score.b2_score, 'B2'))
-            elif strategy == '完美图形' and score.is_perfect_pattern:
-                results.append((ts_code, score.total_score, '完美图形'))
-            elif strategy == '超级B1' and score.sb1_score >= 3:
-                results.append((ts_code, score.sb1_score, '超级B1'))
-        except Exception:
-            continue
-
-    print(f"\n筛选条件: {strategy}")
-    print(f"扫描股票: {len(ts_codes)} 只")
     print(f"命中: {len(results)} 只\n")
 
-    for ts_code, score, reason in sorted(results, key=lambda x: x[1], reverse=True)[:limit]:
-        print(f"  {ts_code}  {reason}={score}")
+    for s in results[:limit]:
+        reasons = '；'.join((s.reasons or s.warnings)[:2])
+        print(f"  {s.ts_code}  {s.name}  评分={s.score}  {reasons}")
 
 
 def cmd_watchlist(args):
@@ -226,6 +220,8 @@ def main():
                           choices=['B1', 'B2', '完美图形', '超级B1', '建仓波', '吸筹', '安全'],
                           default='B1', help='筛选策略')
     p_screen.add_argument('--limit', type=int, default=20, help='输出数量')
+    p_screen.add_argument('--scan', type=int, default=500,
+                          help='扫描股票数量（越大覆盖越广越慢，默认500）')
 
     # watchlist
     p_wl = subparsers.add_parser('watchlist', help='自选股管理')

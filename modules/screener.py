@@ -4,12 +4,13 @@
 """
 
 import sqlite3
+from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 import os
 
-# 数据库路径
+# 数据库路径默认值（实际连接时动态读取 DB_PATH 环境变量，见 get_db_connection）
 DB_PATH = "data/stock_data.db"
 
 # 并行化阈值：小于此数量不启用多进程（启动开销不值得）
@@ -55,8 +56,12 @@ class MarketStatus:
 
 
 def get_db_connection() -> sqlite3.Connection:
-    """获取数据库连接"""
-    conn = sqlite3.connect(DB_PATH)
+    """获取数据库连接（动态读取 DB_PATH 环境变量，未设置时回退到项目根下默认路径）"""
+    path_str = os.getenv("DB_PATH", DB_PATH)
+    path = Path(path_str)
+    if not path.is_absolute():
+        path = (Path(__file__).parent.parent / path_str).resolve()
+    conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -537,34 +542,42 @@ def _filter_stock(result: Tuple[str, List[Dict], StockScore], criteria: str) -> 
         return True
 
     # 高级选股策略（基于战法检测）
-    elif criteria == "super_b1":
-        from .strategies import detect_sb1
-        for i in range(max(10, len(klines) - 5), len(klines)):
-            sig = detect_sb1(klines, i)
-            if sig:
-                score.warnings.append(f"超级B1 J={sig.details.get('j', 0):.1f}")
-                return True
-    elif criteria == "changan":
-        from .strategies import detect_changan
-        for i in range(max(3, len(klines) - 5), len(klines)):
-            sig = detect_changan(klines, i)
-            if sig:
-                score.reasons.append(f"长安战法 胜率75%")
-                return True
-    elif criteria == "b2_breakout":
-        from .strategies import detect_b2
-        for i in range(max(15, len(klines) - 5), len(klines)):
-            sig = detect_b2(klines, i)
-            if sig:
-                score.reasons.append(f"B2突破 涨{sig.details.get('pct_chg', 0):.1f}%")
-                return True
-    elif criteria == "b3_consensus":
-        from .strategies import detect_b3
-        for i in range(max(20, len(klines) - 5), len(klines)):
-            sig = detect_b3(klines, i)
-            if sig:
-                score.reasons.append(f"B3分歧转一致")
-                return True
+    # detect_* 需要含 is_beidou / is_suoliang 等预计算字段的"富"K线，
+    # 而 get_recent_klines 返回的是精简 dict —— 这里改用 strategies.core 的完整取数，
+    # 否则 detect_sb1 / detect_b2 等会抛 KeyError。
+    elif criteria in ("super_b1", "changan", "b2_breakout", "b3_consensus"):
+        from .strategies.core import get_kline_data as _get_rich_klines
+        rich = _get_rich_klines(ts_code, len(klines))
+        if not rich:
+            return False
+        if criteria == "super_b1":
+            from .strategies import detect_sb1
+            for i in range(max(10, len(rich) - 5), len(rich)):
+                sig = detect_sb1(rich, i)
+                if sig:
+                    score.warnings.append(f"超级B1 J={sig.details.get('j', 0):.1f}")
+                    return True
+        elif criteria == "changan":
+            from .strategies import detect_changan
+            for i in range(max(3, len(rich) - 5), len(rich)):
+                sig = detect_changan(rich, i)
+                if sig:
+                    score.reasons.append("长安战法 胜率75%")
+                    return True
+        elif criteria == "b2_breakout":
+            from .strategies import detect_b2
+            for i in range(max(15, len(rich) - 5), len(rich)):
+                sig = detect_b2(rich, i)
+                if sig:
+                    score.reasons.append(f"B2突破 涨{sig.details.get('pct_chg', 0):.1f}%")
+                    return True
+        elif criteria == "b3_consensus":
+            from .strategies import detect_b3
+            for i in range(max(20, len(rich) - 5), len(rich)):
+                sig = detect_b3(rich, i)
+                if sig:
+                    score.reasons.append("B3分歧转一致")
+                    return True
 
     # P2 指标选股策略
     elif criteria in ("build_wave", "xishou", "safe"):

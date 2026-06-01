@@ -138,3 +138,54 @@ class TestScoreRisk:
         score, warnings = score_risk(klines)
         assert score == 50
         assert "数据不足" in warnings
+
+
+_ALL_CRITERIA = [
+    "b1", "perfect", "oversold", "breakout",
+    "super_b1", "changan", "b2_breakout", "b3_consensus",
+    "build_wave", "xishou", "safe",
+]
+
+
+class TestScreenStocksIntegration:
+    """回归：_filter_stock 对战法类 criteria（super_b1 / b2_breakout / changan /
+    b3_consensus）曾用 get_recent_klines 的精简 dict 调 detect_*，抛
+    KeyError('is_beidou' / 'is_suoliang')。现改用 strategies.core 的富 K 线。
+    覆盖全部 criteria，断言不抛异常且返回 list。"""
+
+    @pytest.mark.parametrize("criteria", _ALL_CRITERIA)
+    def test_criteria_no_crash(self, db_conn, criteria):
+        from modules.screener import screen_stocks
+        from tests.conftest import (
+            write_klines_to_db, write_stock_basic, generate_b1_scenario,
+        )
+        write_stock_basic(db_conn, ts_code="600519.SH")
+        write_klines_to_db(db_conn, generate_b1_scenario(ts_code="600519.SH"))
+
+        results = screen_stocks(criteria=criteria, max_stocks=5, use_parallel=False)
+        assert isinstance(results, list)
+
+
+class TestCmdScreenWiring:
+    """回归：cmd_screen 曾构造空的 StockScore dataclass 并读取不存在的属性
+    （is_b2 / sb1_score / is_perfect_pattern / total_score），异常被
+    except 吞掉 → 永远 0 命中。现应映射到 screen_stocks 真正引擎并能跑通。"""
+
+    @pytest.mark.parametrize(
+        "strategy",
+        ['B1', 'B2', '完美图形', '超级B1', '建仓波', '吸筹', '安全'],
+    )
+    def test_cmd_screen_runs(self, db_conn, strategy, capsys):
+        from argparse import Namespace
+        from modules.cli import cmd_screen
+        from tests.conftest import (
+            write_klines_to_db, write_stock_basic, generate_b1_scenario,
+        )
+        write_stock_basic(db_conn, ts_code="600519.SH")
+        write_klines_to_db(db_conn, generate_b1_scenario(ts_code="600519.SH"))
+
+        # 不应抛异常（旧 bug 下战法类策略会静默吞异常 / 0 命中）
+        cmd_screen(Namespace(strategy=strategy, limit=5, scan=5))
+        out = capsys.readouterr().out
+        assert "筛选条件" in out
+        assert "命中" in out
