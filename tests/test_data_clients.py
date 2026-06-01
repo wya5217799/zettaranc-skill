@@ -134,3 +134,18 @@ class TestQcoreLakeClient:
             "ts_code", "name", "area", "industry", "market", "list_date", "is_hs"
         ]
         assert len(b) > 1000
+
+    def test_trade_date_is_yyyymmdd(self):
+        """整数算术转换的 trade_date 必须是 8 位 YYYYMMDD（防 strftime 替换回归）"""
+        df = self._client().get_daily("600487.SH", "20240101", "20240131")
+        assert df["trade_date"].str.match(r"^\d{8}$").all()
+
+    def test_cache_reuse_consistent(self):
+        """同一 client 实例多次/多 code 调用，结果稳定且互不串扰（缓存正确性）"""
+        c = self._client()
+        a1 = c.get_daily("600487.SH", "20240101", "20240131")
+        a2 = c.get_daily("600487.SH", "20240101", "20240131")
+        other = c.get_daily("000001.SZ", "20240101", "20240131")
+        assert a1.equals(a2)                       # 重复调用幂等
+        assert (a1["ts_code"] == "600487.SH").all()
+        assert (other["ts_code"] == "000001.SZ").all()  # 不同 code 不串扰

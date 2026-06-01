@@ -18,8 +18,9 @@ Qcore 数据湖客户端（读取 qcore 项目沉淀的 Parquet 数据湖，免 
 
 import os
 import logging
+import threading
 from pathlib import Path
-from typing import Optional
+from typing import Dict, Optional
 
 try:
     import pandas as pd
@@ -56,6 +57,30 @@ class QcoreLakeClient:
                 f"未找到 qcore 数据湖日线文件: {self.daily_bar_path}\n"
                 f"请在 .env 设置 QCORE_DATA_DIR 指向 qcore 项目的 data/ 目录。"
             )
+        # 懒加载的「按 code 分组」缓存。daily_bar.parquet 按 date 排序，
+        # 每个 row group 的 code 统计范围都覆盖全市场，谓词下推无法跳过任何
+        # row group —— 逐只 read_parquet(filters=) 会退化为全表扫(~156ms/只)。
+        # 故首次访问时全量读一次并按 code 分组，后续切片≈0ms。
+        # 批量同步 5000+ 只: 810s → ~3s。代价是同步期间约 1.3GB 内存。
+        self._code_groups: Optional[Dict[str, "pd.DataFrame"]] = None
+        self._groups_lock = threading.Lock()
+
+    def _get_code_groups(self) -> Dict[str, "pd.DataFrame"]:
+        """全量读 daily_bar 一次并按 code 分组（双检锁，线程安全）。"""
+        if self._code_groups is None:
+            with self._groups_lock:
+                if self._code_groups is None:  # 双重检查，避免并发重复加载
+                    full = pd.read_parquet(self.daily_bar_path)
+                    # date → YYYYMMDD 字符串：用整数算术而非 strftime
+                    # （8M 行上 strftime 约 17s，整数算术约 2s，结果一致）
+                    _dt = pd.to_datetime(full["date"])
+                    full["trade_date"] = (
+                        _dt.dt.year * 10000 + _dt.dt.month * 100 + _dt.dt.day
+                    ).astype(str)
+                    self._code_groups = {
+                        code: g for code, g in full.groupby("code")
+                    }
+        return self._code_groups
 
     # ==================== 股票基础信息 ====================
 
@@ -89,9 +114,7 @@ class QcoreLakeClient:
         """
         code = ts_code.split(".")[0]  # 6 位裸代码
         try:
-            df = pd.read_parquet(
-                self.daily_bar_path, filters=[("code", "==", code)]
-            )
+            df = self._get_code_groups().get(code)
         except Exception as e:
             logger.error(f"qcore 数据湖读取失败 {ts_code} (code={code}): {e}")
             return pd.DataFrame()
@@ -99,9 +122,7 @@ class QcoreLakeClient:
         if df is None or df.empty:
             return pd.DataFrame()
 
-        df = df.copy()
-        df["trade_date"] = pd.to_datetime(df["date"]).dt.strftime("%Y%m%d")
-        # 日期区间过滤（YYYYMMDD 字符串可直接比较）
+        # 日期区间过滤（trade_date 已在缓存中预计算为 YYYYMMDD 字符串）
         df = df[(df["trade_date"] >= start_date) & (df["trade_date"] <= end_date)]
         if df.empty:
             return pd.DataFrame()
