@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 from modules.setup_wizard import (
     check_env_exists, check_data_mode, write_env_file,
-    get_mode_display_name, MODE_JNB, MODE_NORMAL
+    get_mode_display_name, MODE_JNB, MODE_NORMAL, MODE_AKSHARE, MODE_QCORE
 )
 
 
@@ -53,6 +53,59 @@ class TestWriteEnvFile:
         content = Path(path).read_text(encoding="utf-8")
         assert "DATA_MODE=jnb" in content
         assert "TUSHARE_TOKEN=test_token_12345" in content
+
+    def test_write_akshare_mode(self, tmp_path):
+        """写 akshare 免 token 模式"""
+        if "DATA_MODE" in os.environ:
+            del os.environ["DATA_MODE"]
+        path = write_env_file(mode=MODE_AKSHARE, env_path=tmp_path / ".env")
+        assert os.environ.get("DATA_MODE") == MODE_AKSHARE
+        assert "DATA_MODE=akshare" in Path(path).read_text(encoding="utf-8")
+
+    def test_preserves_existing_keys(self, tmp_path):
+        """切换模式时必须保留既有键（QCORE_DATA_DIR / LLM_API_KEY 等不被冲掉）。
+
+        这是 write_env_file 旧实现的回归点：原先整体重写 .env 会丢失
+        qcore / Tushare 中转 / LLM 等配置。
+        """
+        env = tmp_path / ".env"
+        env.write_text(
+            "DATA_MODE=qcore\n"
+            "QCORE_DATA_DIR=/path/to/lake\n"
+            "TUSHARE_API_URL=https://tt.example.cn\n"
+            "LLM_API_KEY=sk-test-keep-me\n",
+            encoding="utf-8",
+        )
+        write_env_file(mode=MODE_AKSHARE, env_path=env)
+        content = env.read_text(encoding="utf-8")
+        assert "DATA_MODE=akshare" in content
+        assert "QCORE_DATA_DIR=/path/to/lake" in content
+        assert "TUSHARE_API_URL=https://tt.example.cn" in content
+        assert "LLM_API_KEY=sk-test-keep-me" in content
+
+    def test_preserves_comments_and_order(self, tmp_path):
+        """逐行就地替换：用户注释与键顺序必须保留，仅 DATA_MODE 被改。"""
+        env = tmp_path / ".env"
+        env.write_text(
+            "# 我的私有注释\n"
+            "DATA_MODE=qcore\n"
+            "# qcore 目录说明\n"
+            "QCORE_DATA_DIR=/lake\n",
+            encoding="utf-8",
+        )
+        write_env_file(mode=MODE_AKSHARE, env_path=env)
+        content = env.read_text(encoding="utf-8")
+        assert "# 我的私有注释" in content
+        assert "# qcore 目录说明" in content
+        assert "DATA_MODE=akshare" in content
+        assert "QCORE_DATA_DIR=/lake" in content
+        # DATA_MODE 不应被重复写入
+        assert content.count("DATA_MODE=") == 1
+
+    def test_invalid_mode_raises(self, tmp_path):
+        """打错字的模式应抛 ValueError，而非静默写坏 .env。"""
+        with pytest.raises(ValueError):
+            write_env_file(mode="aksahre", env_path=tmp_path / ".env")
 
 
 class TestCheckDataMode:

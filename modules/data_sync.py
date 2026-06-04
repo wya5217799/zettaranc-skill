@@ -509,7 +509,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 
             更新条数
         """
         if self.pro is None:
-            logger.warning(f"stk_factor 仅 Tushare(jnb) 模式可用，当前为 {self.data_mode} 模式，跳过")
+            logger.info(f"stk_factor 为 Tushare 专属增强项（本地用 KDJ/MACD 等自算指标替代），{self.data_mode} 模式跳过，不影响核心功能")
             return 0
         try:
             if start_date is None:
@@ -656,7 +656,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 
             更新条数
         """
         if self.pro is None:
-            logger.warning(f"daily_basic 仅 Tushare(jnb) 模式可用，当前为 {self.data_mode} 模式，跳过")
+            logger.info(f"daily_basic 为 Tushare 专属增强项（市值/估值，活跃市值已由 qcore 专表提供），{self.data_mode} 模式跳过，不影响核心功能")
             return 0
         try:
             self.ensure_daily_basic_columns()
@@ -768,7 +768,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 
             更新条数
         """
         if self.pro is None:
-            logger.warning(f"moneyflow 仅 Tushare(jnb) 模式可用，当前为 {self.data_mode} 模式，跳过")
+            logger.info(f"moneyflow 跳过（Tushare 专属；{self.data_mode} 模式下战法资金流加分项缺省按 0，不影响选股主逻辑。详见 ADR-0001）")
             return 0
         try:
             self._rate_limit("moneyflow")

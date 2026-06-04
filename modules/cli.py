@@ -94,15 +94,15 @@ def cmd_analyze(args):
         observe = [s for s in signals if s.priority.value == 1]
 
         if critical:
-            print(f"  🔴 紧急 ({len(critical)}个):")
+            print(f"  [紧急] ({len(critical)}个):")
             for s in critical[:3]:
                 print(f"     {s.trade_date} {s.strategy.value}: {s.description}")
         if opportunity:
-            print(f"  🟢 机会 ({len(opportunity)}个):")
+            print(f"  [机会] ({len(opportunity)}个):")
             for s in opportunity[:3]:
                 print(f"     {s.trade_date} {s.strategy.value}: {s.description}")
         if observe:
-            print(f"  ⚪ 观察 ({len(observe)}个):")
+            print(f"  [观察] ({len(observe)}个):")
             for s in observe[:3]:
                 print(f"     {s.trade_date} {s.strategy.value}: {s.description}")
 
@@ -193,7 +193,20 @@ def cmd_diagnose(args):
     print(format_report(diagnosis))
 
 
+def cmd_huoyue(args):
+    """活跃市值（全市场择时标尺）"""
+    from modules.active_mktcap import get_active_mktcap, format_active_mktcap
+
+    reading = get_active_mktcap(days=args.days)
+    print(format_active_mktcap(reading))
+
+
 def main():
+    # 控制台编码加固：避免 emoji / 特殊符号在中文 Windows(GBK) 控制台 print 时崩溃。
+    # 包 import 时已加固一次；此处兜底覆盖“import 后 stdout 被替换”的入口场景。
+    from modules import _configure_console
+    _configure_console()
+
     parser = argparse.ArgumentParser(
         description="Z哥量化工具 CLI",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -204,6 +217,7 @@ def main():
   python -m modules.cli watchlist add 600487.SH --tag 通信设备,5G
   python -m modules.cli watchlist scan
   python -m modules.cli diagnose 600487.SH
+  python -m modules.cli huoyue --days 60
         """
     )
 
@@ -235,6 +249,10 @@ def main():
     p_diag.add_argument('ts_code', help='股票代码')
     p_diag.add_argument('--days', type=int, default=120, help='分析天数')
 
+    # huoyue (活跃市值)
+    p_huo = subparsers.add_parser('huoyue', help='活跃市值（全市场择时标尺）')
+    p_huo.add_argument('--days', type=int, default=60, help='回看交易日数')
+
     args = parser.parse_args()
 
     if not args.command:
@@ -253,6 +271,8 @@ def main():
         cmd_watchlist(args)
     elif args.command == 'diagnose':
         cmd_diagnose(args)
+    elif args.command == 'huoyue':
+        cmd_huoyue(args)
 
 
 if __name__ == '__main__':
