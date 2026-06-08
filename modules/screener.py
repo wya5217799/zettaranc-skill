@@ -305,7 +305,6 @@ def score_volume_pattern(klines: List[Dict]) -> Tuple[float, List[str]]:
     today = klines[-1]
     vols = [k['vol'] for k in klines]
     vol_ma5 = calculate_vol_ma(vols, 5)
-    vol_ma10 = calculate_vol_ma(vols, 10)
 
     score = 50
     reasons = []

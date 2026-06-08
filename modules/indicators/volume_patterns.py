@@ -158,7 +158,6 @@ def detect_trade_signal(klines: List[DailyData]) -> TradeSignal:
     # 计算当前指标
     k, d, j = calculate_kdj(klines)
     dif_list, dea_list, macd_list = calculate_macd(klines)
-    macd_hist = macd_list[-1] if macd_list else 0
 
     # MACD 语料判断
     macd_signals = {}
@@ -271,7 +270,6 @@ def detect_chuhuo_wushi(klines: List[DailyData]) -> Dict:
     # ===== 方式三：阶梯放量下跌 =====
     # 连续3-5根阴线，成交量维持高位，价格阶梯跌
     consecutive_yin = 0
-    vol_increase = True
     for i in range(1, min(6, len(klines))):
         k = klines[-i]
         if k.close < k.open:  # 阴线

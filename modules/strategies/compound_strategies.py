@@ -18,7 +18,6 @@ def detect_changan(klines: List[Dict], index: int,
     if index < 3:
         return None
 
-    day1 = klines[index-2]
     day2 = klines[index-1]
     day3 = klines[index]
 
