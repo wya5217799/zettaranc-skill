@@ -459,7 +459,7 @@ def update_watchlist_item(ts_code: str, updates: Dict[str, Any]) -> bool:
     updates = {k: v for k, v in updates.items() if k in allowed}
     if not updates:
         return False
-    set_clause = ", ".join([f"{k} = ?" for k in updates.keys()])
+    set_clause = ", ".join([f"{k} = ?" for k in updates])
     values = list(updates.values()) + [ts_code]
     with get_connection() as conn:
         cursor = conn.cursor()
@@ -551,7 +551,7 @@ def update_trade_record(trade_id: int, updates: Dict[str, Any]) -> bool:
     if not updates:
         return False
 
-    set_clause = ", ".join([f"{k} = ?" for k in updates.keys()])
+    set_clause = ", ".join([f"{k} = ?" for k in updates])
     values = list(updates.values()) + [trade_id]
 
     with get_connection() as conn:

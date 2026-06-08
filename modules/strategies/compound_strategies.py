@@ -15,10 +15,7 @@ def _nana_count_rise_beidou(klines: List[Dict], start: int, end_inclusive: int) 
 
 def _nana_has_fangliang_yinxian(klines: List[Dict], start: int, end_exclusive: int) -> bool:
     """检查 [start, end_exclusive) 区间内是否存在巨量阴线（顶部风险信号）。"""
-    for i in range(start, end_exclusive):
-        if klines[i]['is_fangliang_yinxian']:
-            return True
-    return False
+    return any(klines[i]['is_fangliang_yinxian'] for i in range(start, end_exclusive))
 
 
 def _nana_count_suoliang(klines: List[Dict], start: int, end_exclusive: int) -> int:
@@ -77,9 +74,7 @@ def _pinghang_volume_ok(klines: List[Dict], y1: int, y2: int) -> bool:
     max_yin_vol = max(klines[i]['vol'] for i in range(y1 + 1, y2))
     if klines[y1]['vol'] < max_yin_vol * 1.2 or klines[y2]['vol'] < max_yin_vol * 1.2:
         return False
-    if klines[y2]['vol'] < klines[y1]['vol'] * 0.9:
-        return False
-    return True
+    return not klines[y2]['vol'] < klines[y1]['vol'] * 0.9
 
 def detect_changan(klines: List[Dict], index: int,
                    kirin_context: Optional[Dict] = None) -> Optional[StrategySignal]:

@@ -207,10 +207,7 @@ class TradeParser:
             return False
 
         # 检查是否有明显的分隔符
-        for sep in ['|', '\t', ',']:
-            if sep in lines[0] and sep in lines[1]:
-                return True
-        return False
+        return any(sep in lines[0] and sep in lines[1] for sep in ['|', '\t', ','])
 
     def _parse_json(self, text: str) -> ParseResult:
         """解析JSON格式"""
@@ -260,7 +257,7 @@ class TradeParser:
             # 解析数据行（取第一行）
             values = [v.strip() for v in lines[1].split(sep)]
 
-            data = dict(zip(headers, values))
+            data = dict(zip(headers, values, strict=False))
             mapped = self._map_fields(data)
 
             missing = self._check_required_fields(mapped)

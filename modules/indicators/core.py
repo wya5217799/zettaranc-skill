@@ -454,7 +454,7 @@ def precompute_kdj_sequence(klines: List[DailyData], period: int = 9) -> List[Tu
     final_d = pd.concat([prefix_d, d], ignore_index=True).round(2)
     final_j = pd.concat([prefix_j, j], ignore_index=True).round(2)
     
-    return list(zip(final_k.tolist(), final_d.tolist(), final_j.tolist()))
+    return list(zip(final_k.tolist(), final_d.tolist(), final_j.tolist(), strict=False))
 def precompute_bbi_sequence(klines: List[DailyData]) -> List[float]:
     """
     预计算全量 BBI 序列，使用 Pandas 向量化优化。

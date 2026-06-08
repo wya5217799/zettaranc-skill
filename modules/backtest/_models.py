@@ -166,7 +166,7 @@ def _calc_stats(result: PortfolioBacktestResult, trading_days: int = 0):
     drawdown = 0.0
     daily_returns = []
 
-    for i, (date, value) in enumerate(result.equity_curve):
+    for i, (_date, value) in enumerate(result.equity_curve):
         if value > peak:
             peak = value
         dd = (peak - value) / peak

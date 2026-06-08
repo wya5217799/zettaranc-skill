@@ -32,7 +32,7 @@ except ImportError:
     raise ImportError(
         "请使用 'pip install -e .' 安装包后通过 'zt' 命令调用，"
         "或通过 'python -m modules.indicators.data_layer' 运行"
-    )
+    ) from None
 
 # dotenv 加载已移至 modules/__init__.py（包级别一次性加载）
 

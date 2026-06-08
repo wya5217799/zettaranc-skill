@@ -51,9 +51,7 @@ def check_env_exists(env_path: Optional[Path] = None) -> bool:
         return bool(token) and "你的" not in token
     if mode == MODE_QCORE:
         return bool(os.environ.get("QCORE_DATA_DIR", ""))
-    if mode in (MODE_AKSHARE, MODE_NORMAL):
-        return True
-    return False
+    return mode in (MODE_AKSHARE, MODE_NORMAL)
 
 
 def check_data_mode() -> Optional[str]:
