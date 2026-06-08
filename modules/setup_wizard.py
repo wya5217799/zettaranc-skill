@@ -66,6 +66,49 @@ def get_mode_display_name(mode: str) -> str:
     return MODE_NAMES.get(mode, mode)
 
 
+def _merge_env_lines(old_lines: list[str], updates: dict) -> list[str]:
+    """逐行「原样保留 + 就地替换」旧 .env 内容。
+
+    注释、空行、键顺序全部保留；只将命中 updates 的键替换为新值。
+    """
+    out: list[str] = []
+    for raw in old_lines:
+        stripped = raw.strip()
+        if stripped and not stripped.startswith("#") and "=" in stripped:
+            key = stripped.split("=", 1)[0].strip()
+            if key in updates:
+                out.append(f"{key}={updates[key]}")
+                continue
+        out.append(raw)
+    return out
+
+
+def _append_missing_keys(out_lines: list[str], updates: dict) -> list[str]:
+    """将 updates 中尚未出现在 out_lines 里的键追加到末尾（含必要默认值）。"""
+    tail = dict(updates)
+    tail.setdefault("DATA_DIR", "data")
+    tail.setdefault("DB_PATH", "data/stock_data.db")
+    present = {
+        ln.split("=", 1)[0].strip()
+        for ln in out_lines
+        if "=" in ln and not ln.strip().startswith("#")
+    }
+    result = list(out_lines)
+    for key, value in tail.items():
+        if key not in present:
+            result.append(f"{key}={value}")
+    return result
+
+
+def _sync_environ(mode: str, token: Optional[str], extra: Optional[dict]) -> None:
+    """将写入 .env 的键同步到当前进程的 os.environ，使本次会话立即生效。"""
+    os.environ["DATA_MODE"] = mode
+    if token:
+        os.environ["TUSHARE_TOKEN"] = token
+    for _k, _v in (extra or {}).items():
+        os.environ[_k] = str(_v)
+
+
 def write_env_file(token: Optional[str] = None, mode: str = MODE_NORMAL,
                    env_path: Optional[Path] = None,
                    extra: Optional[dict] = None) -> str:
@@ -104,34 +147,15 @@ def write_env_file(token: Optional[str] = None, mode: str = MODE_NORMAL,
     if token:
         updates["TUSHARE_TOKEN"] = token
 
-    # 1) 逐行「原样保留 + 就地替换」：注释、空行、键顺序全部保留，
-    #    只改命中的键，避免把 QCORE_DATA_DIR / 中转 URL / LLM Key 及其注释冲掉。
+    # 1) 逐行「原样保留 + 就地替换」
     old_lines = (
         env_path.read_text(encoding="utf-8").splitlines()
         if env_path.exists() else []
     )
-    out: list[str] = []
-    for raw in old_lines:
-        stripped = raw.strip()
-        if stripped and not stripped.startswith("#") and "=" in stripped:
-            key = stripped.split("=", 1)[0].strip()
-            if key in updates:
-                out.append(f"{key}={updates[key]}")
-                continue
-        out.append(raw)
+    out = _merge_env_lines(old_lines, updates)
 
     # 2) 文件中尚不存在的键追加到末尾（含必要默认值）
-    tail = dict(updates)
-    tail.setdefault("DATA_DIR", "data")
-    tail.setdefault("DB_PATH", "data/stock_data.db")
-    present = {
-        ln.split("=", 1)[0].strip()
-        for ln in out
-        if "=" in ln and not ln.strip().startswith("#")
-    }
-    for key, value in tail.items():
-        if key not in present:
-            out.append(f"{key}={value}")
+    out = _append_missing_keys(out, updates)
 
     # 3) 全新文件加一行模式说明头
     if not old_lines:
@@ -140,11 +164,7 @@ def write_env_file(token: Optional[str] = None, mode: str = MODE_NORMAL,
     env_path.write_text("\n".join(out) + "\n", encoding="utf-8")
 
     # 4) 同步进程环境变量，使当前会话立即生效
-    os.environ["DATA_MODE"] = mode
-    if token:
-        os.environ["TUSHARE_TOKEN"] = token
-    for _k, _v in (extra or {}).items():
-        os.environ[_k] = str(_v)
+    _sync_environ(mode, token, extra)
 
     return str(env_path)
 
@@ -164,6 +184,74 @@ def test_jnb_connection(token: str) -> bool:
     except Exception as e:
         print(f"  连接测试失败: {e}")
         return False
+
+
+def _handle_akshare() -> str:
+    """向导 choice=1：配置 akshare 免 token 模式并返回模式名。"""
+    env_path = write_env_file(mode=MODE_AKSHARE)
+    print(f"  配置已写入: {env_path}")
+    print("akshare 模式已启用（免 token，开箱即用）")
+    return MODE_AKSHARE
+
+
+def _handle_qcore() -> str:
+    """向导 choice=2：收集数据湖目录，配置 qcore 模式并返回模式名。"""
+    print()
+    print("请输入 qcore 数据湖目录（指向 量化交易 项目的 data/ 目录）")
+    data_dir = input("QCORE_DATA_DIR: ").strip()
+    env_path = write_env_file(
+        mode=MODE_QCORE,
+        extra={"QCORE_DATA_DIR": data_dir} if data_dir else None,
+    )
+    print(f"  配置已写入: {env_path}")
+    if not data_dir:
+        print("  注意：未填目录，请稍后在 .env 里补上 QCORE_DATA_DIR")
+    print("qcore 模式已启用")
+    return MODE_QCORE
+
+
+def _handle_jnb() -> str:
+    """向导 choice=3：收集 Token、测试连通性，配置 JNB 或回退 akshare 并返回模式名。"""
+    print()
+    print("请输入你的 Tushare Token（56位）")
+    print("  获取地址：https://tushare.pro/user/token")
+    print()
+
+    while True:
+        token = input("Token: ").strip()
+        if len(token) >= 30:
+            break
+        print("  Token 长度不够，请重新输入")
+
+    print()
+    print("正在测试连通性...")
+    if test_jnb_connection(token):
+        print("  连接测试通过！")
+        env_path = write_env_file(token=token, mode=MODE_JNB)
+        print(f"  配置已写入: {env_path}")
+        print()
+        print("JNB 模式已启用")
+        return MODE_JNB
+
+    print("  连接测试失败")
+    print()
+    retry = input("是否重试？[y/n]: ").strip().lower()
+    if retry == "y":
+        os.environ.pop("TUSHARE_TOKEN", None)
+        return run_wizard()
+    print("已切换至 akshare 模式（免 token，开箱即用）")
+    env_path = write_env_file(mode=MODE_AKSHARE)
+    print(f"配置已写入: {env_path}")
+    return MODE_AKSHARE
+
+
+def _handle_websearch() -> str:
+    """向导 choice=4：配置普通小万模式并返回模式名。"""
+    print()
+    env_path = write_env_file(mode=MODE_NORMAL)
+    print(f"配置已写入: {env_path}")
+    print("普通小万模式已启用")
+    return MODE_NORMAL
 
 
 def run_wizard():
@@ -204,68 +292,13 @@ def run_wizard():
             break
         print("  请输入 1 / 2 / 3 / 4")
 
-    if choice == "1":
-        # ====== akshare（推荐默认，免 token）======
-        env_path = write_env_file(mode=MODE_AKSHARE)
-        print(f"  配置已写入: {env_path}")
-        print("akshare 模式已启用（免 token，开箱即用）")
-        return MODE_AKSHARE
-
-    if choice == "2":
-        # ====== qcore（本机数据湖）======
-        print()
-        print("请输入 qcore 数据湖目录（指向 量化交易 项目的 data/ 目录）")
-        data_dir = input("QCORE_DATA_DIR: ").strip()
-        env_path = write_env_file(
-            mode=MODE_QCORE,
-            extra={"QCORE_DATA_DIR": data_dir} if data_dir else None,
-        )
-        print(f"  配置已写入: {env_path}")
-        if not data_dir:
-            print("  注意：未填目录，请稍后在 .env 里补上 QCORE_DATA_DIR")
-        print("qcore 模式已启用")
-        return MODE_QCORE
-
-    if choice == "3":
-        # ====== JNB（Tushare，休眠保留）======
-        print()
-        print("请输入你的 Tushare Token（56位）")
-        print("  获取地址：https://tushare.pro/user/token")
-        print()
-
-        while True:
-            token = input("Token: ").strip()
-            if len(token) >= 30:
-                break
-            print("  Token 长度不够，请重新输入")
-
-        print()
-        print("正在测试连通性...")
-        if test_jnb_connection(token):
-            print("  连接测试通过！")
-            env_path = write_env_file(token=token, mode=MODE_JNB)
-            print(f"  配置已写入: {env_path}")
-            print()
-            print("JNB 模式已启用")
-            return MODE_JNB
-
-        print("  连接测试失败")
-        print()
-        retry = input("是否重试？[y/n]: ").strip().lower()
-        if retry == "y":
-            os.environ.pop("TUSHARE_TOKEN", None)
-            return run_wizard()
-        print("已切换至 akshare 模式（免 token，开箱即用）")
-        env_path = write_env_file(mode=MODE_AKSHARE)
-        print(f"配置已写入: {env_path}")
-        return MODE_AKSHARE
-
-    # ====== [4] 普通小万 模式 ======
-    print()
-    env_path = write_env_file(mode=MODE_NORMAL)
-    print(f"配置已写入: {env_path}")
-    print("普通小万模式已启用")
-    return MODE_NORMAL
+    _dispatch = {
+        "1": _handle_akshare,
+        "2": _handle_qcore,
+        "3": _handle_jnb,
+        "4": _handle_websearch,
+    }
+    return _dispatch[choice]()
 
 
 if __name__ == "__main__":
