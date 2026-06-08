@@ -9,8 +9,8 @@ from typing import List, Dict, Any, Optional, Tuple
 
 from .core import (
     StrategyType, Priority, Action, StrategySignal,
-    get_kline_data, get_db_connection,
-    _klines_dict_to_daily, _dict_to_daily,
+    get_kline_data,
+    _dict_to_daily,
     _calc_kdj, _calc_bbi,
 )
 from .base_strategies import detect_b1, detect_b2, detect_b3, detect_sb1
@@ -19,7 +19,6 @@ from .compound_strategies import (
     detect_yidong_dilian, detect_pinghang, detect_kengqi, detect_duichen_va,
 )
 from .sell_signals import detect_s1, detect_s2, detect_s3, detect_brick_signals, _calc_dif
-from .kirin import analyze_kirin_phase
 
 
 # ---------------------------------------------------------------------------

@@ -8,7 +8,7 @@
       定义在 modules/backtest/__init__.py，以保证 mock patch 路径正确。
 """
 
-from typing import Any, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 from modules.backtest._models import (
     Trade, Position, PortfolioBacktestResult,
