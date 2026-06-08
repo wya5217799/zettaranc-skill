@@ -36,7 +36,9 @@ def analyze_kirin_phase(klines: List[Dict]) -> Dict[str, Any]:
     # 吸筹：低位、缩量震荡、红肥绿瘦（阳线量能 > 阴线）
     is_low = min(closes) <= max(closes) * 0.85
     is_shrink = avg_vol < sum(klines[i]['vol'] for i in range(-60, -30)) / 30 if len(klines) >= 60 else False
-    if is_low and red_avg > green_avg * 1.2:
+    # 吸筹需「缩量」：数据足够(>=60)时强制要求 is_shrink；不足则退回旧行为不门控
+    # （此前 is_shrink 计算了却从未进入条件，吸筹被过度识别）
+    if is_low and (is_shrink or len(klines) < 60) and red_avg > green_avg * 1.2:
         phase = "吸筹"
         confidence = 0.75
 
