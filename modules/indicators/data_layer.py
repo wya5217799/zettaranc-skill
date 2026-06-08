@@ -219,35 +219,8 @@ def get_realtime_data(ts_code: str) -> Optional[DailyData]:
     """
     # 实际使用时由 tushare_client 获取实时数据
     pass
-def analyze_stock(ts_code: str, days: int = 100) -> IndicatorResult:
-    """
-    综合分析单只股票
-
-    Args:
-        ts_code: 股票代码
-        days: 分析数据天数
-
-    Returns:
-        指标计算结果
-    """
-    klines = get_kline_data(ts_code, days)
-
-    if not klines:
-        return IndicatorResult(ts_code=ts_code, trade_date="")
-
-    today = klines[-1]
-    yesterday = klines[-2] if len(klines) > 1 else None
-
-    # ===== 缓存查询 =====
-    cached = _load_indicator_cache(ts_code, today.trade_date)
-    if cached:
-        return cached
-
-    result = IndicatorResult(
-        ts_code=ts_code,
-        trade_date=today.trade_date
-    )
-
+def _compute_oscillators(result: IndicatorResult, klines: List[DailyData]) -> None:
+    """计算振荡类指标：KDJ / MACD / BBI / RSI / WR / 布林带 / 量比"""
     # 计算 KDJ
     k, d, j = calculate_kdj(klines)
     result.k = k
@@ -280,22 +253,6 @@ def analyze_stock(ts_code: str, days: int = 100) -> IndicatorResult:
     if len(klines) >= 24:
         result.bbi = calculate_bbi(klines)
 
-    # 计算均线
-    closes = [k.close for k in klines]
-    if len(closes) >= 5:
-        result.ma5 = calculate_ma(closes, 5)
-    if len(closes) >= 10:
-        result.ma10 = calculate_ma(closes, 10)
-    if len(closes) >= 20:
-        result.ma20 = calculate_ma(closes, 20)
-    if len(closes) >= 60:
-        result.ma60 = calculate_ma(closes, 60)
-    # 52周（约240交易日）最高价
-    if len(klines) >= 240:
-        highs = [k.high for k in klines[-240:]]
-        result.high_52w = max(highs)
-        result.high_52w_dist = (result.high_52w - today.close) / today.close * 100
-
     # 计算 RSI
     if len(klines) >= 25:
         rsi6, rsi12, rsi24 = calculate_rsi_multi(klines)
@@ -321,6 +278,28 @@ def analyze_stock(ts_code: str, days: int = 100) -> IndicatorResult:
     # 计算量比
     result.vol_ratio = calculate_vol_ratio(klines)
 
+
+def _compute_moving_averages(result: IndicatorResult, klines: List[DailyData]) -> None:
+    """计算均线及52周最高价"""
+    today = klines[-1]
+    closes = [k.close for k in klines]
+    if len(closes) >= 5:
+        result.ma5 = calculate_ma(closes, 5)
+    if len(closes) >= 10:
+        result.ma10 = calculate_ma(closes, 10)
+    if len(closes) >= 20:
+        result.ma20 = calculate_ma(closes, 20)
+    if len(closes) >= 60:
+        result.ma60 = calculate_ma(closes, 60)
+    # 52周（约240交易日）最高价
+    if len(klines) >= 240:
+        highs = [k.high for k in klines[-240:]]
+        result.high_52w = max(highs)
+        result.high_52w_dist = (result.high_52w - today.close) / today.close * 100
+
+
+def _compute_double_line(result: IndicatorResult, klines: List[DailyData]) -> None:
+    """计算 Z哥双线战法 / 单针下20 / 单针下30"""
     # ========== Z哥双线战法 ==========
     if len(klines) >= 115:
         result.zg_white = calculate_zg_white(klines)
@@ -340,6 +319,9 @@ def analyze_stock(ts_code: str, days: int = 100) -> IndicatorResult:
     if len(klines) >= 22:
         result.is_needle_30 = detect_needle_30(klines)
 
+
+def _compute_brick_system(result: IndicatorResult, klines: List[DailyData]) -> None:
+    """计算砖型图 / 关键价位 / DMI/ADX"""
     # ========== 砖型图系统 ==========
     if len(klines) >= 10:
         result.brick_value = calculate_brick_value(klines)
@@ -361,7 +343,11 @@ def analyze_stock(ts_code: str, days: int = 100) -> IndicatorResult:
         result.dmi_minus = dmi_minus
         result.adx = adx
 
-    # 量价形态检测
+
+def _compute_vol_patterns(result: IndicatorResult, klines: List[DailyData]) -> None:
+    """计算量价形态"""
+    today = klines[-1]
+    yesterday = klines[-2] if len(klines) > 1 else None
     vol_pattern = detect_volume_pattern(today, yesterday)
     result.is_beidou = vol_pattern['is_beidou']
     result.is_suoliang = vol_pattern['is_suoliang']
@@ -369,8 +355,11 @@ def analyze_stock(ts_code: str, days: int = 100) -> IndicatorResult:
     result.is_jiayang_zhenyin = vol_pattern['is_jiayang_zhenyin']
     result.is_fangliang_yinxian = vol_pattern['is_fangliang_yinxian']
 
-    # ========== B1建仓波检测 ==========
+
+def _compute_b1_b2_patterns(result: IndicatorResult, klines: List[DailyData]) -> None:
+    """计算 B1/B2战法 / 关键K / 暴力K / 两个30% / 娜娜图 / 黄金碗 / 呼吸结构 / SB1 / 超级B1 / 双枪"""
     if len(klines) >= 10:
+        # B1建仓波检测
         b1 = detect_b1_today(klines)
         result.is_b1 = b1['is_b1']
         result.b1_j_value = b1['b1_j_value']
@@ -379,8 +368,7 @@ def analyze_stock(ts_code: str, days: int = 100) -> IndicatorResult:
         result.b1_volume_shrink = b1['b1_volume_shrink']
         result.b1_score = b1['b1_score']
 
-    # ========== B2突破检测 ==========
-    if len(klines) >= 10:
+        # B2突破检测
         b2 = detect_b2_today(klines)
         result.is_b2 = b2['is_b2']
         result.b2_follows_b1 = b2['b2_follows_b1']
@@ -389,12 +377,10 @@ def analyze_stock(ts_code: str, days: int = 100) -> IndicatorResult:
         result.b2_volume_up = b2['b2_volume_up']
         result.b2_score = b2['b2_score']
 
-    # ========== 关键K检测（扫描60日） ==========
-    if len(klines) >= 10:
+        # 关键K检测（扫描60日）
         result.key_k_list = detect_key_k(klines)
 
-    # ========== 暴力K检测（扫描60日） ==========
-    if len(klines) >= 10:
+        # 暴力K检测（扫描60日）
         vk_list = detect_violence_k(klines)
         if vk_list:
             latest_vk = [v for v in vk_list if v.get('is_latest', False)]
@@ -404,48 +390,48 @@ def analyze_stock(ts_code: str, days: int = 100) -> IndicatorResult:
                 result.violence_k_type = vk['type']
                 result.violence_k_body = vk['body_pct']
 
-    # ========== 两个30%原则 ==========
-    if len(klines) >= 10:
+        # 两个30%原则
         rule30 = check_two_30_rule(klines)
         result.b1_rally_pct = rule30['b1_rally_pct']
         result.b1_pass_30 = rule30['b1_pass_30']
 
-    # ========== 娜娜图 ==========
+        # 呼吸结构
+        breath = detect_breathing_structure(klines)
+        result.breath_phase = breath['breath_phase']
+        result.breath_n_type = breath['breath_n_type']
+
     if len(klines) >= 20:
+        # 娜娜图
         nana = detect_nana_chart(klines)
         result.is_nana = nana['is_nana']
 
-    # ========== 黄金碗 ==========
     if len(klines) >= 120:
+        # 黄金碗
         bowl = detect_golden_bowl(klines)
         result.is_in_bowl = bowl['is_in_bowl']
         result.bowl_upper = bowl['bowl_upper']
         result.bowl_lower = bowl['bowl_lower']
 
-    # ========== 呼吸结构 ==========
-    if len(klines) >= 10:
-        breath = detect_breathing_structure(klines)
-        result.breath_phase = breath['breath_phase']
-        result.breath_n_type = breath['breath_n_type']
-
-    # ========== SB1假摔 ==========
     if len(klines) >= 6:
+        # SB1假摔
         sb1 = detect_sb1(klines)
         result.is_sb1 = sb1['is_sb1']
 
-    # ========== 超级B1 ==========
     if len(klines) >= 15:
+        # 超级B1
         sb1_detail = detect_sb1_detailed(klines)
         result.is_sb1_detailed = sb1_detail['is_sb1_detailed']
 
-    # ========== 双枪战法 ==========
-    if len(klines) >= 15:
+        # 双枪战法
         dg = detect_double_gun(klines)
         result.is_double_gun = dg['is_double_gun']
         result.double_gun_vol1 = dg['double_gun_vol1']
         result.double_gun_vol2 = dg['double_gun_vol2']
         result.double_gun_gap_days = dg['double_gun_gap_days']
 
+
+def _compute_extra_patterns(result: IndicatorResult, klines: List[DailyData]) -> None:
+    """计算异动选股 / B3买点 / 四块砖交易体系"""
     # ========== 异动选股法 ==========
     if len(klines) >= 65:
         yidong = detect_volume_anomaly(klines)
@@ -467,13 +453,51 @@ def analyze_stock(ts_code: str, days: int = 100) -> IndicatorResult:
         result.brick_action_desc = brick_sys['brick_action_desc']
         result.is_brick_flip_green = brick_sys['is_brick_flip_green']
 
-    # 卖出评分
+
+def _compute_signals(result: IndicatorResult, klines: List[DailyData]) -> None:
+    """计算卖出评分和交易信号"""
     sell_score, sell_desc, sell_items = calculate_sell_score(klines)
     result.sell_score = sell_score
     result.sell_items = sell_items
-
-    # 交易信号
     result.signal = detect_trade_signal(klines)
+
+
+def analyze_stock(ts_code: str, days: int = 100) -> IndicatorResult:
+    """
+    综合分析单只股票
+
+    Args:
+        ts_code: 股票代码
+        days: 分析数据天数
+
+    Returns:
+        指标计算结果
+    """
+    klines = get_kline_data(ts_code, days)
+
+    if not klines:
+        return IndicatorResult(ts_code=ts_code, trade_date="")
+
+    today = klines[-1]
+
+    # ===== 缓存查询 =====
+    cached = _load_indicator_cache(ts_code, today.trade_date)
+    if cached:
+        return cached
+
+    result = IndicatorResult(
+        ts_code=ts_code,
+        trade_date=today.trade_date
+    )
+
+    _compute_oscillators(result, klines)
+    _compute_moving_averages(result, klines)
+    _compute_double_line(result, klines)
+    _compute_brick_system(result, klines)
+    _compute_vol_patterns(result, klines)
+    _compute_b1_b2_patterns(result, klines)
+    _compute_extra_patterns(result, klines)
+    _compute_signals(result, klines)
 
     return result
 def visualize_brick_chart(klines: List[DailyData], lookback: int = 20) -> str:
@@ -551,18 +575,8 @@ def visualize_brick_chart(klines: List[DailyData], lookback: int = 20) -> str:
     lines.append(f"  砖值范围: {min(brick_history):.1f} ~ {max(brick_history):.1f}")
 
     return "\n".join(lines)
-def format_result(result: IndicatorResult) -> str:
-    """格式化输出结果"""
-    lines = [
-        f"{'='*60}",
-        f"股票: {result.ts_code}  日期: {result.trade_date}",
-        f"{'='*60}",
-        f"[KDJ]  K={result.k:.2f}  D={result.d:.2f}  J={result.j:.2f}",
-        "",
-        f"[MACD] DIF={result.dif:.4f}  DEA={result.dea:.4f}  柱={result.macd_hist:.4f}",
-    ]
-
-    # MACD 语料判断
+def _format_macd_section(result: IndicatorResult) -> str:
+    """格式化 MACD 语料段落，返回多行拼接字符串"""
     macd_lines = []
     zone = "多头区间(DIF>0)" if result.is_dif_positive else "空头区间(DIF<0)"
     macd_lines.append(f"  0轴位置: {zone}")
@@ -592,24 +606,11 @@ def format_result(result: IndicatorResult) -> str:
     else:
         macd_lines.append("  MACD未否决")
 
-    lines.append("\n".join(macd_lines))
-    lines.append("")
-    lines.append(f"[BBI]  {result.bbi:.2f}")
-    lines.append(f"[均线] MA5={result.ma5:.2f}  MA10={result.ma10:.2f}  MA20={result.ma20:.2f}  MA60={result.ma60:.2f}")
-    if result.high_52w > 0:
-        lines.append(f"[52周最高] {result.high_52w:.2f}  (距现价 +{result.high_52w_dist:.1f}%)")
-    lines.append(f"[RSI]  RSI6={result.rsi6:.2f}  RSI12={result.rsi12:.2f}  RSI24={result.rsi24:.2f}")
-    lines.append(f"[WR]   WR5={result.wr5:.2f}  WR10={result.wr10:.2f}")
-    lines.append(f"[布林带] 中={result.boll_mid:.2f}  上={result.boll_upper:.2f}  下={result.boll_lower:.2f}  宽={result.boll_width:.2f}%  位置={result.boll_position:.1f}%")
-    lines.append(f"[量比] {result.vol_ratio:.2f}x")
-    lines.append("")
-    lines.append(f"[双线战法] 白线={result.zg_white:.2f}  大哥线={result.dg_yellow:.2f}  Gold:{result.is_gold_cross}  Dead:{result.is_dead_cross}")
-    lines.append(f"[单针下20] RSL_S={result.rsl_short:.2f}  RSL_L={result.rsl_long:.2f}  Signal:{result.is_needle_20}")
-    if result.is_needle_30:
-        lines.append("[单针下30] *** 信号触发 (红>85, 白<30)")
-    lines.append("")
+    return "\n".join(macd_lines)
 
-    # B1/B2 战法检测
+
+def _format_b1_b2_section(result: IndicatorResult, lines: List[str]) -> None:
+    """追加 B1/B2 战法检测段落到 lines"""
     if result.b1_score > 0 or result.b2_score > 0:
         lines.append("[B1建仓波]")
         if result.is_b1:
@@ -625,7 +626,9 @@ def format_result(result: IndicatorResult) -> str:
             lines.append(f"  涨幅={result.b2_pct_chg:.1f}%  J={result.b2_j_value}  跟随B1:{result.b2_follows_b1}  评分:{result.b2_score}/4 (未触发)")
         lines.append("")
 
-    # 砖型图可视化
+
+def _format_brick_vis_section(result: IndicatorResult, lines: List[str]) -> None:
+    """追加砖型图可视化段落到 lines"""
     try:
         klines = get_kline_data(result.ts_code, days=120)
         if len(klines) >= 10:
@@ -636,14 +639,9 @@ def format_result(result: IndicatorResult) -> str:
     except Exception:
         pass
 
-    lines.append(f"[砖型图] Brick={result.brick_value:.2f}  TrendUp:{result.brick_trend_up}  Fanbao:{result.is_fanbao}")
-    lines.append("")
-    lines.append("[量价形态]")
-    lines.append(f"  倍量: {'OK' if result.is_beidou else '--'}  缩量: {'OK' if result.is_suoliang else '--'}")
-    lines.append(f"  假阴真阳: {'OK' if result.is_jiayin_zhenyang else '--'}  放量阴线: {'OK' if result.is_fangliang_yinxian else '--'}")
-    lines.append("")
 
-    # 关键K / 暴力K（显示60日内找到的关键K）
+def _format_key_k_section(result: IndicatorResult, lines: List[str]) -> None:
+    """追加关键K / 暴力K / 两个30%原则段落到 lines"""
     if result.key_k_list:
         lines.append(f"[关键K] 60日内找到 {len(result.key_k_list)} 根关键K:")
         for kk in result.key_k_list[-5:]:  # 最多显示最近5根
@@ -654,12 +652,13 @@ def format_result(result: IndicatorResult) -> str:
         lines.append(f"[暴力K] *** {result.violence_k_type}  实体={result.violence_k_body:.1f}%")
         lines.append("")
 
-    # 两个30%原则
     if result.b1_rally_pct != 0 or result.b1_pass_30:
         lines.append(f"[两个30%原则] B1涨幅={result.b1_rally_pct:.1f}%  通过:{result.b1_pass_30}")
         lines.append("")
 
-    # 娜娜图/黄金碗/呼吸结构/SB1/B3
+
+def _format_optional_patterns(result: IndicatorResult, lines: List[str]) -> None:
+    """追加娜娜图 / 黄金碗 / 呼吸结构 / SB1 / 超级B1 / 双枪 / 异动 / B3 段落到 lines"""
     if result.is_nana:
         lines.append("[娜娜图] *** 完美建仓信号")
         lines.append("")
@@ -687,13 +686,18 @@ def format_result(result: IndicatorResult) -> str:
         lines.append("[B3买点] *** B3信号触发")
         lines.append("")
 
-    # 四块砖交易体系
+
+def _format_four_brick_section(result: IndicatorResult, lines: List[str]) -> None:
+    """追加四块砖交易体系段落到 lines"""
     if result.brick_action:
         flip_marker = " *** 红翻绿止损" if result.is_brick_flip_green else ""
         lines.append(f"[四块砖体系] 连续{result.brick_consecutive}砖 | 操作: {result.brick_action}{flip_marker}")
         lines.append(f"  {result.brick_action_desc}")
         lines.append("")
 
+
+def _format_sell_score_section(result: IndicatorResult, lines: List[str]) -> None:
+    """追加防卖飞评分 + 交易信号段落到 lines"""
     lines.append(f"[防卖飞评分] {result.sell_score}/5")
     if result.sell_items:
         for item_name, passed in result.sell_items.items():
@@ -703,6 +707,51 @@ def format_result(result: IndicatorResult) -> str:
     lines.append("")
     lines.append(f"[交易信号] {result.signal.value}")
     lines.append(f"{'='*60}")
+
+
+def format_result(result: IndicatorResult) -> str:
+    """格式化输出结果"""
+    lines = [
+        f"{'='*60}",
+        f"股票: {result.ts_code}  日期: {result.trade_date}",
+        f"{'='*60}",
+        f"[KDJ]  K={result.k:.2f}  D={result.d:.2f}  J={result.j:.2f}",
+        "",
+        f"[MACD] DIF={result.dif:.4f}  DEA={result.dea:.4f}  柱={result.macd_hist:.4f}",
+    ]
+
+    lines.append(_format_macd_section(result))
+    lines.append("")
+    lines.append(f"[BBI]  {result.bbi:.2f}")
+    lines.append(f"[均线] MA5={result.ma5:.2f}  MA10={result.ma10:.2f}  MA20={result.ma20:.2f}  MA60={result.ma60:.2f}")
+    if result.high_52w > 0:
+        lines.append(f"[52周最高] {result.high_52w:.2f}  (距现价 +{result.high_52w_dist:.1f}%)")
+    lines.append(f"[RSI]  RSI6={result.rsi6:.2f}  RSI12={result.rsi12:.2f}  RSI24={result.rsi24:.2f}")
+    lines.append(f"[WR]   WR5={result.wr5:.2f}  WR10={result.wr10:.2f}")
+    lines.append(f"[布林带] 中={result.boll_mid:.2f}  上={result.boll_upper:.2f}  下={result.boll_lower:.2f}  宽={result.boll_width:.2f}%  位置={result.boll_position:.1f}%")
+    lines.append(f"[量比] {result.vol_ratio:.2f}x")
+    lines.append("")
+    lines.append(f"[双线战法] 白线={result.zg_white:.2f}  大哥线={result.dg_yellow:.2f}  Gold:{result.is_gold_cross}  Dead:{result.is_dead_cross}")
+    lines.append(f"[单针下20] RSL_S={result.rsl_short:.2f}  RSL_L={result.rsl_long:.2f}  Signal:{result.is_needle_20}")
+    if result.is_needle_30:
+        lines.append("[单针下30] *** 信号触发 (红>85, 白<30)")
+    lines.append("")
+
+    _format_b1_b2_section(result, lines)
+    _format_brick_vis_section(result, lines)
+
+    lines.append(f"[砖型图] Brick={result.brick_value:.2f}  TrendUp:{result.brick_trend_up}  Fanbao:{result.is_fanbao}")
+    lines.append("")
+    lines.append("[量价形态]")
+    lines.append(f"  倍量: {'OK' if result.is_beidou else '--'}  缩量: {'OK' if result.is_suoliang else '--'}")
+    lines.append(f"  假阴真阳: {'OK' if result.is_jiayin_zhenyang else '--'}  放量阴线: {'OK' if result.is_fangliang_yinxian else '--'}")
+    lines.append("")
+
+    _format_key_k_section(result, lines)
+    _format_optional_patterns(result, lines)
+    _format_four_brick_section(result, lines)
+    _format_sell_score_section(result, lines)
+
     return "\n".join(lines)
 def main():
     """命令行入口"""
