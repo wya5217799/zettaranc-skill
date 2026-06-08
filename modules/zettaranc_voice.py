@@ -241,7 +241,3 @@ class ZettarancVoice:
     def get_analysis_prompt() -> str:
         """获取分析提示词"""
         return STOCK_ANALYSIS_PROMPT
-
-
-# 全局实例（兼容旧代码）
-z_voice = ZettarancVoice()
