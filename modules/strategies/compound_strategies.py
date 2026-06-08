@@ -1,5 +1,85 @@
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple
 from .core import StrategyType, StrategySignal, Priority, Action, _calc_kdj
+
+
+def _nana_count_rise_beidou(klines: List[Dict], start: int, end_inclusive: int) -> int:
+    """统计 [start, end_inclusive] 区间内连续放量上涨（is_rise and is_beidou）的根数。"""
+    count = 0
+    for i in range(start, end_inclusive + 1):
+        if i < 1:
+            continue
+        if klines[i]['is_rise'] and klines[i]['is_beidou']:
+            count += 1
+    return count
+
+
+def _nana_has_fangliang_yinxian(klines: List[Dict], start: int, end_exclusive: int) -> bool:
+    """检查 [start, end_exclusive) 区间内是否存在巨量阴线（顶部风险信号）。"""
+    for i in range(start, end_exclusive):
+        if klines[i]['is_fangliang_yinxian']:
+            return True
+    return False
+
+
+def _nana_count_suoliang(klines: List[Dict], start: int, end_exclusive: int) -> int:
+    """统计 [start, end_exclusive) 区间内缩量 K 线根数。"""
+    count = 0
+    for i in range(start, end_exclusive):
+        if klines[i]['is_suoliang']:
+            count += 1
+    return count
+
+
+def _nana_mdc_boost(
+    today: Dict,
+    kirin_context: Optional[Dict],
+) -> Tuple[float, List[str]]:
+    """计算娜娜图形 MDC 加分项，返回 (confidence_delta, detail_list)。"""
+    delta = 0.0
+    details: List[str] = []
+    if today.get('boll_lower') and today['close'] <= today['boll_lower'] * 1.05:
+        delta += 0.10
+        details.append("回踩布林下轨支撑")
+    if kirin_context and kirin_context.get('stage') in ('吸筹', '拉升'):
+        delta += 0.05
+        details.append(f"处于主力{kirin_context['stage']}期")
+    return delta, details
+
+
+def _pinghang_collect_yang_indices(klines: List[Dict], index: int) -> List[int]:
+    """收集最近7天内所有放量阳线的索引列表。"""
+    yang_indices = []
+    for i in range(max(0, index - 6), index + 1):
+        if klines[i]['is_rise'] and klines[i]['is_beidou']:
+            yang_indices.append(i)
+    return yang_indices
+
+
+def _pinghang_between_ok(
+    klines: List[Dict], y1: int, y2: int
+) -> Tuple[bool, int, int]:
+    """
+    校验两根放量阳线之间的 K 线结构是否满足平行重炮条件。
+
+    返回 (通过, between_count, yin_count)；不通过时后两项值无意义。
+    """
+    between_count = y2 - y1 - 1
+    if between_count < 2:
+        return False, between_count, 0
+    yin_count = sum(1 for i in range(y1 + 1, y2) if not klines[i]['is_rise'])
+    if yin_count < between_count * 0.5:
+        return False, between_count, yin_count
+    return True, between_count, yin_count
+
+
+def _pinghang_volume_ok(klines: List[Dict], y1: int, y2: int) -> bool:
+    """校验两根阳线的量能是否稳稳压住中间阴线，且第二根量能 >= 第一根 90%。"""
+    max_yin_vol = max(klines[i]['vol'] for i in range(y1 + 1, y2))
+    if klines[y1]['vol'] < max_yin_vol * 1.2 or klines[y2]['vol'] < max_yin_vol * 1.2:
+        return False
+    if klines[y2]['vol'] < klines[y1]['vol'] * 0.9:
+        return False
+    return True
 
 def detect_changan(klines: List[Dict], index: int,
                    kirin_context: Optional[Dict] = None) -> Optional[StrategySignal]:
@@ -127,27 +207,16 @@ def detect_nana(klines: List[Dict], index: int,
         return None
 
     # 检查连续放量上涨（最近3-5天）
-    rise_count = 0
-    for i in range(index-4, index+1):
-        if i < 1:
-            continue
-        if klines[i]['is_rise'] and klines[i]['is_beidou']:
-            rise_count += 1
-
+    rise_count = _nana_count_rise_beidou(klines, index - 4, index)
     if rise_count < 3:
         return None
 
     # 检查顶部无巨量阴线
-    for i in range(index-4, index):
-        if klines[i]['is_fangliang_yinxian']:
-            return None
+    if _nana_has_fangliang_yinxian(klines, index - 4, index):
+        return None
 
     # 检查连续缩量回调
-    suoliang_count = 0
-    for i in range(index-4, index):
-        if klines[i]['is_suoliang']:
-            suoliang_count += 1
-
+    suoliang_count = _nana_count_suoliang(klines, index - 4, index)
     if suoliang_count < 2:
         return None
 
@@ -158,16 +227,8 @@ def detect_nana(klines: List[Dict], index: int,
 
     # MDC 验证
     confidence = 0.85
-    mdc_details = []
-    
-    today = klines[index]
-    if today.get('boll_lower') and today['close'] <= today['boll_lower'] * 1.05:
-        confidence += 0.10
-        mdc_details.append("回踩布林下轨支撑")
-        
-    if kirin_context and kirin_context.get('stage') in ('吸筹', '拉升'):
-        confidence += 0.05
-        mdc_details.append(f"处于主力{kirin_context['stage']}期")
+    mdc_delta, mdc_details = _nana_mdc_boost(klines[index], kirin_context)
+    confidence += mdc_delta
 
     return StrategySignal(
         ts_code=klines[index]['ts_code'],
@@ -259,38 +320,24 @@ def detect_pinghang(klines: List[Dict], index: int) -> Optional[StrategySignal]:
         return None
 
     # 收集最近7天内的放量阳线索引
-    yang_indices = []
-    for i in range(max(0, index - 6), index + 1):
-        if klines[i]['is_rise'] and klines[i]['is_beidou']:
-            yang_indices.append(i)
-
+    yang_indices = _pinghang_collect_yang_indices(klines, index)
     if len(yang_indices) < 2:
         return None
 
     # 取最近两根放量阳线
     y1, y2 = yang_indices[-2], yang_indices[-1]
 
-    # 中间必须夹有至少2根K线
-    between_count = y2 - y1 - 1
-    if between_count < 2:
+    # 校验中间 K 线结构（夹阴条件）
+    between_ok, between_count, yin_count = _pinghang_between_ok(klines, y1, y2)
+    if not between_ok:
         return None
 
-    # 中间阴线数量占比过半
-    yin_count = sum(1 for i in range(y1 + 1, y2) if not klines[i]['is_rise'])
-    if yin_count < between_count * 0.5:
-        return None
-
-    # 阳线成交量压住阴线
-    max_yin_vol = max(klines[i]['vol'] for i in range(y1 + 1, y2))
-    if klines[y1]['vol'] < max_yin_vol * 1.2 or klines[y2]['vol'] < max_yin_vol * 1.2:
+    # 校验量能结构（阳压阴 + 第二根量能条件）
+    if not _pinghang_volume_ok(klines, y1, y2):
         return None
 
     # 第二根阳线涨幅 >= 4%
     if klines[y2]['pct_chg'] < 4:
-        return None
-
-    # 第二根量能 >= 第一根 90%
-    if klines[y2]['vol'] < klines[y1]['vol'] * 0.9:
         return None
 
     # J 值 < 55
