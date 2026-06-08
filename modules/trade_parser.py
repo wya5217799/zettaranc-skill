@@ -5,7 +5,7 @@
 
 import re
 from datetime import datetime
-from typing import Dict, Optional, Any
+from typing import Dict, Optional, Any, Tuple
 from dataclasses import dataclass
 
 
@@ -37,6 +37,134 @@ STOCK_NAME_MAP = {
     "海康": "002415.SZ",
     "海康威视": "002415.SZ",
 }
+
+
+def _parse_date_text(date_text: str, full_text: str, today: datetime) -> Optional[str]:
+    """将匹配到的日期文本转换为 YYYY-MM-DD 字符串；无法识别时返回 None。"""
+    if '今天' in date_text or '今儿' in full_text:
+        return today.strftime('%Y-%m-%d')
+    if '昨天' in date_text or '昨儿' in full_text:
+        return (today.replace(day=today.day - 1)).strftime('%Y-%m-%d')
+    if '前天' in date_text or '前日' in full_text:
+        return (today.replace(day=today.day - 2)).strftime('%Y-%m-%d')
+    if '-' in date_text or '/' in date_text:
+        if len(date_text) == 10:  # yyyy-mm-dd
+            return date_text.replace('/', '-')
+        parts = re.split(r'[-/]', date_text)
+        if len(parts) == 2:
+            return f"{today.year}-{parts[0].zfill(2)}-{parts[1].zfill(2)}"
+    return None
+
+
+def _extract_date(text: str) -> Tuple[Optional[str], bool]:
+    """从口语文本中提取交易日期。
+
+    Returns:
+        (date_str, found): date_str is the extracted date string (or today's
+        date as default when not found); found indicates whether the date was
+        explicitly present in text.
+    """
+    date_patterns = [
+        r'(\d{4}[-/]\d{1,2}[-/]\d{1,2})',
+        r'(\d{1,2}[月/-]\d{1,2}[日/-]?)',
+        r'今天|昨天|前天|前日',
+        r'今儿|昨儿'
+    ]
+
+    today = datetime.now()
+    date_str = None
+
+    for pattern in date_patterns:
+        match = re.search(pattern, text)
+        if match:
+            date_text = match.group(1) if match.groups() else match.group(0)
+            date_str = _parse_date_text(date_text, text, today)
+            break
+
+    if date_str:
+        return date_str, True
+    return today.strftime('%Y-%m-%d'), False
+
+
+def _extract_stock(text: str, name_to_code: Dict[str, str]) -> Tuple[Optional[str], Optional[str]]:
+    """从口语文本中提取股票代码和名称。
+
+    Returns:
+        (ts_code, name): ts_code is the standardised code (e.g. '600519.SH')
+        or None if not found; name is the matched name alias or None.
+    """
+    code_patterns = [
+        r'([012]\d{5})',  # 6位数字代码
+        r'（(\d{6})）',  # 中文括号
+        r'\((\d{6})\)'  # 英文括号
+    ]
+
+    ts_code = None
+    for pattern in code_patterns:
+        match = re.search(pattern, text)
+        if match:
+            ts_code = match.group(1)
+            break
+
+    # 尝试从股票名称匹配（覆盖纯数字匹配）
+    matched_name = None
+    for name, code in name_to_code.items():
+        if name in text:
+            ts_code = code
+            matched_name = name
+            break
+
+    if ts_code is None:
+        return None, None
+
+    # 标准化代码格式（仅对裸6位代码标准化，带后缀的已标准）
+    if len(ts_code) == 6:
+        if ts_code.startswith('0') or ts_code.startswith('3'):
+            ts_code = f"{ts_code}.SZ"
+        elif ts_code.startswith('6'):
+            ts_code = f"{ts_code}.SH"
+        elif ts_code.startswith('4') or ts_code.startswith('8'):
+            ts_code = f"{ts_code}.BJ"
+
+    return ts_code, matched_name
+
+
+def _extract_action(text: str) -> Optional[str]:
+    """从口语文本中提取交易方向（BUY/SELL）。"""
+    if '买' in text:
+        return 'BUY'
+    if '卖' in text:
+        return 'SELL'
+    return None
+
+
+def _extract_price(text: str) -> Optional[float]:
+    """从口语文本中提取价格。"""
+    price_patterns = [
+        r'(\d+(?:\.\d{1,2})?)\s*(?:元|块|块)',
+        r'价格[是为]*\s*(\d+(?:\.\d{1,2})?)',
+        r'@\s*(\d+(?:\.\d{1,2})?)',
+    ]
+    for pattern in price_patterns:
+        match = re.search(pattern, text)
+        if match:
+            return float(match.group(1))
+    return None
+
+
+def _extract_quantity(text: str) -> Optional[int]:
+    """从口语文本中提取数量。"""
+    qty_patterns = [
+        r'(\d+)\s*(?:股|手)',
+        r'数量\s*(\d+)',
+        r'买了?\s*(\d+)',
+        r'卖[出]?\s*(\d+)',
+    ]
+    for pattern in qty_patterns:
+        match = re.search(pattern, text)
+        if match:
+            return int(match.group(1))
+    return None
 
 
 class TradeParser:
@@ -157,128 +285,38 @@ class TradeParser:
         """解析口语化描述（最高优先级）"""
         data: dict[str, Any] = {}
         missing: list[str] = []
-        errors: list[str] = []
 
         # 日期提取
-        date_patterns = [
-            r'(\d{4}[-/]\d{1,2}[-/]\d{1,2})',
-            r'(\d{1,2}[月/-]\d{1,2}[日/-]?)',
-            r'今天|昨天|前天|前日',
-            r'今儿|昨儿'
-        ]
-
-        today = datetime.now()
-        date_str = None
-
-        for pattern in date_patterns:
-            match = re.search(pattern, text)
-            if match:
-                if match.groups():
-                    date_text = match.group(1)
-                else:
-                    date_text = match.group(0)
-                if '今天' in date_text or '今儿' in text:
-                    date_str = today.strftime('%Y-%m-%d')
-                elif '昨天' in date_text or '昨儿' in text:
-                    date_str = (today.replace(day=today.day - 1)).strftime('%Y-%m-%d')
-                elif '前天' in date_text or '前日' in text:
-                    date_str = (today.replace(day=today.day - 2)).strftime('%Y-%m-%d')
-                elif '-' in date_text or '/' in date_text:
-                    if len(date_text) == 10:  # yyyy-mm-dd
-                        date_str = date_text.replace('/', '-')
-                    else:  # mm-dd 或 m-d
-                        parts = re.split(r'[-/]', date_text)
-                        if len(parts) == 2:
-                            date_str = f"{today.year}-{parts[0].zfill(2)}-{parts[1].zfill(2)}"
-                break
-
-        if date_str:
-            data['trade_date'] = date_str
-        else:
+        date_str, date_found = _extract_date(text)
+        data['trade_date'] = date_str
+        if not date_found:
             missing.append('trade_date')
-            data['trade_date'] = today.strftime('%Y-%m-%d')  # 默认今天
 
-        # 股票代码提取
-        code_patterns = [
-            r'([012]\d{5})',  # 6位数字代码
-            r'（(\d{6})）',  # 中文括号
-            r'\((\d{6})\)'  # 英文括号
-        ]
-
-        ts_code = None
-        for pattern in code_patterns:
-            match = re.search(pattern, text)
-            if match:
-                ts_code = match.group(1)
-                break
-
-        # 尝试从股票名称匹配
-        for name, code in self.name_to_code.items():
-            if name in text:
-                ts_code = code
-                if 'name' not in data:
-                    data['name'] = name
-                break
-
+        # 股票代码/名称提取
+        ts_code, matched_name = _extract_stock(text, self.name_to_code)
         if ts_code:
-            # 标准化代码格式
-            if len(ts_code) == 6:
-                if ts_code.startswith('0') or ts_code.startswith('3'):
-                    ts_code = f"{ts_code}.SZ"
-                elif ts_code.startswith('6'):
-                    ts_code = f"{ts_code}.SH"
-                elif ts_code.startswith('4') or ts_code.startswith('8'):
-                    ts_code = f"{ts_code}.BJ"
             data['ts_code'] = ts_code
+            if matched_name and 'name' not in data:
+                data['name'] = matched_name
         else:
             missing.append('ts_code')
 
         # 交易方向
-        action = None
-        if '买' in text:
-            action = 'BUY'
-            data['action'] = 'BUY'
-        elif '卖' in text:
-            action = 'SELL'
-            data['action'] = 'SELL'
-
-        if not action:
+        action = _extract_action(text)
+        if action:
+            data['action'] = action
+        else:
             missing.append('action')
 
         # 价格提取
-        price_patterns = [
-            r'(\d+(?:\.\d{1,2})?)\s*(?:元|块|块)',
-            r'价格[是为]*\s*(\d+(?:\.\d{1,2})?)',
-            r'@\s*(\d+(?:\.\d{1,2})?)',
-        ]
-
-        price = None
-        for pattern in price_patterns:
-            match = re.search(pattern, text)
-            if match:
-                price = float(match.group(1))
-                break
-
+        price = _extract_price(text)
         if price:
             data['price'] = price
         else:
             missing.append('price')
 
         # 数量提取
-        qty_patterns = [
-            r'(\d+)\s*(?:股|手)',
-            r'数量\s*(\d+)',
-            r'买了?\s*(\d+)',
-            r'卖[出]?\s*(\d+)',
-        ]
-
-        quantity = None
-        for pattern in qty_patterns:
-            match = re.search(pattern, text)
-            if match:
-                quantity = int(match.group(1))
-                break
-
+        quantity = _extract_quantity(text)
         if quantity:
             data['quantity'] = quantity
         else:
@@ -301,7 +339,7 @@ class TradeParser:
             confidence=confidence,
             data=data if data else None,
             missing_fields=missing,
-            error_message=",".join(errors) if errors else ""
+            error_message=""
         )
 
     def _map_fields(self, data: Dict) -> Dict:
