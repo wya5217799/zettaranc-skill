@@ -1,6 +1,48 @@
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple
 from .core import StrategyType, StrategySignal, Priority, _klines_dict_to_daily
 from ..indicators import detect_four_brick_system
+
+
+def _calc_s1_mdc_score(
+    today: Dict,
+    yesterday: Dict,
+    kirin_context: Optional[Dict],
+) -> Tuple[float, List[str]]:
+    """计算 S1 MDC 评分调整量与说明文本（麒麟阶段 + 资金流 + 布林）。"""
+    confidence = 0.60
+    mdc_details: List[str] = []
+
+    # 麒麟阶段背景验证
+    if kirin_context:
+        stage = kirin_context.get('stage')
+        if stage == '派发':
+            confidence += 0.25
+            mdc_details.append("处于主力派发期(高危)")
+        elif stage == '拉升':
+            confidence -= 0.10  # 拉升期的第一次大阴线可能是洗盘
+            mdc_details.append("处于拉升中继(警惕洗盘)")
+
+    # 资金流验证
+    outflow_ratio = (
+        (today.get('large_outflow', 0) - today.get('large_inflow', 0)) / today['amount']
+        if today['amount'] > 0
+        else 0
+    )
+    if outflow_ratio > 0.05:
+        confidence += 0.15
+        mdc_details.append(f"主力大单强力撤离({outflow_ratio*100:.1f}%)")
+
+    # 布林验证
+    if (
+        today.get('boll_mid')
+        and yesterday['close'] > yesterday['boll_mid']
+        and today['close'] < today['boll_mid']
+    ):
+        confidence += 0.10
+        mdc_details.append("跌破布林中轨(趋势走坏)")
+
+    return confidence, mdc_details
+
 
 def detect_s1(klines: List[Dict], index: int,
               kirin_context: Optional[Dict] = None) -> Optional[StrategySignal]:
@@ -47,29 +89,7 @@ def detect_s1(klines: List[Dict], index: int,
         return None
 
     # 3. MDC 评分升级
-    confidence = 0.60
-    mdc_details = []
-
-    # 麒麟阶段背景验证
-    if kirin_context:
-        stage = kirin_context.get('stage')
-        if stage == '派发':
-            confidence += 0.25
-            mdc_details.append("处于主力派发期(高危)")
-        elif stage == '拉升':
-            confidence -= 0.10 # 拉升期的第一次大阴线可能是洗盘
-            mdc_details.append("处于拉升中继(警惕洗盘)")
-
-    # 资金流验证
-    outflow_ratio = (today.get('large_outflow', 0) - today.get('large_inflow', 0)) / today['amount'] if today['amount'] > 0 else 0
-    if outflow_ratio > 0.05:
-        confidence += 0.15
-        mdc_details.append(f"主力大单强力撤离({outflow_ratio*100:.1f}%)")
-
-    # 布林验证
-    if today.get('boll_mid') and yesterday['close'] > yesterday['boll_mid'] and today['close'] < today['boll_mid']:
-        confidence += 0.10
-        mdc_details.append("跌破布林中轨(趋势走坏)")
+    confidence, mdc_details = _calc_s1_mdc_score(today, yesterday, kirin_context)
 
     return StrategySignal(
         ts_code=today['ts_code'],
