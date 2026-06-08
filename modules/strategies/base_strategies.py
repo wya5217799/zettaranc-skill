@@ -1,11 +1,146 @@
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple
 from .core import StrategyType, StrategySignal, Priority, Action, _calc_kdj
 
 def _safe_num(val, default=0):
     """Return val if it's a real number, otherwise default."""
     return val if val is not None else default
 
-def detect_b1(klines: List[Dict], index: int, 
+
+def _b1_mdc_score(today: Dict, kirin_context: Optional[Dict]) -> Tuple[float, List[str]]:
+    """
+    Calculate MDC confidence adjustment and detail labels for a B1 candidate candle.
+
+    Returns (delta_confidence, mdc_details) — caller adds delta to base confidence.
+    Pure function; no side effects.
+    """
+    delta = 0.0
+    details: List[str] = []
+
+    # 麒麟阶段背景验证
+    if kirin_context:
+        stage = kirin_context.get('stage')
+        if stage == '吸筹':
+            delta += 0.20
+            details.append("处于主力吸筹期(高安全)")
+        elif stage == '回落':
+            delta += 0.10
+            details.append("处于回落寻底期")
+        elif stage == '派发':
+            delta -= 0.30
+            details.append("处于主力派发期(高风险)")
+
+    # 布林带超跌验证
+    if today.get('boll_lower') and today['close'] <= today['boll_lower'] * 1.02:
+        delta += 0.15
+        details.append("触及布林下轨(超跌)")
+
+    # 资金流主力意图
+    if _safe_num(today.get('large_inflow')) > _safe_num(today.get('large_outflow')):
+        delta += 0.10
+        details.append("主力大单净流入")
+
+    # RSI 极端超卖
+    if (today.get('rsi6') or 50) < 25:
+        delta += 0.05
+        details.append("RSI极端超卖")
+
+    # DMI 动能
+    if _safe_num(today.get('adx')) > 40:
+        delta += 0.10
+        details.append(f"ADX高位动能竭尽({_safe_num(today.get('adx')):.1f})")
+
+    return delta, details
+
+
+def _b2_boll_score(today: Dict, yesterday: Dict) -> Tuple[float, List[str]]:
+    """
+    Boll-band sub-score for B2: mid-line breakout + widening mouth.
+
+    Returns (delta_confidence, detail_labels). Pure function.
+    """
+    delta = 0.0
+    details: List[str] = []
+
+    if (today.get('boll_mid')
+            and yesterday['close'] < yesterday['boll_mid']
+            and today['close'] > today['boll_mid']):
+        delta += 0.15
+        details.append("突破布林中轨(走强)")
+
+    if today.get('boll_upper') and today.get('boll_lower'):
+        today_width = ((today['boll_upper'] - today['boll_lower']) / today['boll_mid']
+                       if today['boll_mid'] else 0)
+        prev_width = ((yesterday['boll_upper'] - yesterday['boll_lower']) / yesterday['boll_mid']
+                      if yesterday['boll_mid'] else 0)
+        if today_width > prev_width * 1.05:
+            delta += 0.05
+            details.append("布林开口向上")
+
+    return delta, details
+
+
+def _b2_flow_dmi_score(today: Dict, yesterday: Dict) -> Tuple[float, List[str]]:
+    """
+    Capital-flow and DMI sub-score for B2.
+
+    Returns (delta_confidence, detail_labels). Pure function.
+    """
+    delta = 0.0
+    details: List[str] = []
+
+    total_amount = today['amount']
+    net_inflow = today.get('large_inflow', 0) - today.get('large_outflow', 0)
+    if net_inflow > 0 and total_amount > 0:
+        inflow_ratio = net_inflow / total_amount
+        if _safe_num(inflow_ratio, 0) > 0.05:
+            delta += 0.15
+            details.append(f"主力大单强力净流入({inflow_ratio*100:.1f}%)")
+
+    if today.get('dmi_plus') and yesterday.get('dmi_minus'):
+        if (_safe_num(yesterday.get('dmi_plus')) < _safe_num(yesterday.get('dmi_minus'))
+                and _safe_num(today.get('dmi_plus')) > _safe_num(today.get('dmi_minus'))):
+            delta += 0.10
+            details.append("DMI趋势金叉")
+
+    return delta, details
+
+
+def _b2_mdc_score(today: Dict, yesterday: Dict,
+                  kirin_context: Optional[Dict]) -> Tuple[float, List[str]]:
+    """
+    Calculate MDC confidence adjustment and detail labels for a B2 candidate candle.
+
+    Returns (delta_confidence, mdc_details) — caller adds delta to base confidence.
+    Pure function; no side effects.
+    """
+    delta = 0.0
+    details: List[str] = []
+
+    # 麒麟阶段背景验证
+    if kirin_context:
+        stage = kirin_context.get('stage')
+        if stage == '拉升':
+            delta += 0.20
+            details.append("处于主力拉升期(顺势)")
+        elif stage == '吸筹':
+            delta += 0.10
+            details.append("处于吸筹突破期")
+        elif stage == '派发':
+            delta -= 0.40
+            details.append("处于主力派发期(假突破风险)")
+
+    boll_delta, boll_details = _b2_boll_score(today, yesterday)
+    delta += boll_delta
+    details.extend(boll_details)
+
+    flow_delta, flow_details = _b2_flow_dmi_score(today, yesterday)
+    delta += flow_delta
+    details.extend(flow_details)
+
+    return delta, details
+
+
+def detect_b1(klines: List[Dict], index: int,
               kirin_context: Optional[Dict] = None) -> Optional[StrategySignal]:
     """
     检测 B1 买点（已升级 MDC 多维验证 + 麒麟阶段背景）
@@ -37,47 +172,16 @@ def detect_b1(klines: List[Dict], index: int,
     # 检查是否在连续下跌中（绿砖状态）
     recent_4 = klines[index-3:index+1]
     yin_count = sum(1 for k in recent_4 if k['is_yinxian'])
-    if yin_count >= 4: # 强力绿砖，不建议入场
+    if yin_count >= 4:  # 强力绿砖，不建议入场
         return None
 
     # 2. 基础置信度
     is_suoliang = today['is_suoliang']
     confidence = 0.5 + (0.1 if is_suoliang else 0)
-    
-    mdc_details = []
 
-    # 3. 麒麟阶段背景验证 (Contextual Validation)
-    if kirin_context:
-        stage = kirin_context.get('stage')
-        if stage == '吸筹':
-            confidence += 0.20
-            mdc_details.append("处于主力吸筹期(高安全)")
-        elif stage == '回落':
-            confidence += 0.10
-            mdc_details.append("处于回落寻底期")
-        elif stage == '派发':
-            confidence -= 0.30 # 处于派发阶段的 B1 极度危险
-            mdc_details.append("处于主力派发期(高风险)")
-
-    # 4. MDC 验证 - 布林带 (超跌验证)
-    if today.get('boll_lower') and today['close'] <= today['boll_lower'] * 1.02:
-        confidence += 0.15
-        mdc_details.append("触及布林下轨(超跌)")
-
-    # 5. MDC 验证 - 资金流 (主力意图)
-    if _safe_num(today.get('large_inflow')) > _safe_num(today.get('large_outflow')):
-        confidence += 0.10
-        mdc_details.append("主力大单净流入")
-        
-    # 6. MDC 验证 - RSI (极端超卖)
-    if (today.get('rsi6') or 50) < 25:
-        confidence += 0.05
-        mdc_details.append("RSI极端超卖")
-
-    # 7. MDC 验证 - DMI (趋势动能)
-    if _safe_num(today.get('adx')) > 40:
-        confidence += 0.10
-        mdc_details.append(f"ADX高位动能竭尽({_safe_num(today.get('adx')):.1f})")
+    # 3-7. MDC 多维验证（麒麟阶段 + 布林 + 资金流 + RSI + ADX）
+    mdc_delta, mdc_details = _b1_mdc_score(today, kirin_context)
+    confidence += mdc_delta
 
     confidence = max(0.1, min(confidence, 0.98))
 
@@ -147,49 +251,10 @@ def detect_b2(klines: List[Dict], index: int,
     # 2. 基础置信度
     k, d, j = _calc_kdj(klines[:index+1])
     confidence = 0.60
-    mdc_details = []
 
-    # 3. 麒麟阶段背景验证
-    if kirin_context:
-        stage = kirin_context.get('stage')
-        if stage == '拉升':
-            confidence += 0.20
-            mdc_details.append("处于主力拉升期(顺势)")
-        elif stage == '吸筹':
-            confidence += 0.10
-            mdc_details.append("处于吸筹突破期")
-        elif stage == '派发':
-            confidence -= 0.40 # 派发阶段的假突破非常多
-            mdc_details.append("处于主力派发期(假突破风险)")
-
-    # 4. MDC 验证 - 布林带 (突破验证)
-    if today.get('boll_mid') and yesterday['close'] < yesterday['boll_mid'] and today['close'] > today['boll_mid']:
-        confidence += 0.15
-        mdc_details.append("突破布林中轨(走强)")
-        
-    if today.get('boll_upper') and today.get('boll_lower'):
-        # 简单判断开口：width 增加
-        today_width = (today['boll_upper'] - today['boll_lower']) / today['boll_mid'] if today['boll_mid'] else 0
-        prev_width = (yesterday['boll_upper'] - yesterday['boll_lower']) / yesterday['boll_mid'] if yesterday['boll_mid'] else 0
-        if today_width > prev_width * 1.05:
-            confidence += 0.05
-            mdc_details.append("布林开口向上")
-
-    # 5. MDC 验证 - 资金流 (强力买入)
-    total_amount = today['amount']
-    net_inflow = today.get('large_inflow', 0) - today.get('large_outflow', 0)
-    if net_inflow > 0 and total_amount > 0:
-        inflow_ratio = net_inflow / total_amount
-        if _safe_num(inflow_ratio, 0) > 0.05:
-            confidence += 0.15
-            mdc_details.append(f"主力大单强力净流入({inflow_ratio*100:.1f}%)")
-            
-    # 6. MDC 验证 - DMI (金叉验证)
-    if today.get('dmi_plus') and yesterday.get('dmi_minus'):
-        if (_safe_num(yesterday.get('dmi_plus')) < _safe_num(yesterday.get('dmi_minus'))
-                and _safe_num(today.get('dmi_plus')) > _safe_num(today.get('dmi_minus'))):
-            confidence += 0.10
-            mdc_details.append("DMI趋势金叉")
+    # 3-6. MDC 多维验证（麒麟阶段 + 布林 + 资金流 + DMI）
+    mdc_delta, mdc_details = _b2_mdc_score(today, yesterday, kirin_context)
+    confidence += mdc_delta
 
     confidence = max(0.1, min(confidence, 0.98))
 
