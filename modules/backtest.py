@@ -82,6 +82,103 @@ class BacktestResult:
         return "\n".join(lines)
 
 
+def _signals_check_exit(
+    k: Dict[str, Any],
+    current_trade: Trade,
+    result: BacktestResult,
+    stop_loss_pct: float,
+    take_profit_pct: float,
+) -> Tuple[Optional[Trade], bool]:
+    """检查持仓止损/止盈。返回 (current_trade, exited)。"""
+    date = k['trade_date']
+    day_high = k['high']
+    day_low = k['low']
+
+    # 止损
+    if day_low <= current_trade.entry_price * (1 - stop_loss_pct):
+        current_trade.exit_date = date
+        current_trade.exit_price = current_trade.entry_price * (1 - stop_loss_pct)
+        current_trade.pnl = current_trade.exit_price - current_trade.entry_price
+        current_trade.pnl_pct = current_trade.pnl / current_trade.entry_price
+        current_trade.exit_reason = 'stop_loss'
+        result.trades.append(current_trade)
+        return None, True
+
+    # 止盈
+    if day_high >= current_trade.entry_price * (1 + take_profit_pct):
+        current_trade.exit_date = date
+        current_trade.exit_price = current_trade.entry_price * (1 + take_profit_pct)
+        current_trade.pnl = current_trade.exit_price - current_trade.entry_price
+        current_trade.pnl_pct = current_trade.pnl / current_trade.entry_price
+        current_trade.exit_reason = 'take_profit'
+        result.trades.append(current_trade)
+        return None, True
+
+    return current_trade, False
+
+
+def _signals_handle_signal(
+    date: str,
+    price: float,
+    ts_code: str,
+    sig: Any,
+    current_trade: Optional[Trade],
+    result: BacktestResult,
+) -> Optional[Trade]:
+    """处理买入/卖出信号。返回更新后的 current_trade。"""
+    if sig.action == 'BUY' and current_trade is None:
+        return Trade(
+            ts_code=ts_code,
+            entry_date=date,
+            entry_price=price,
+        )
+
+    if sig.action == 'SELL' and current_trade is not None:
+        current_trade.exit_date = date
+        current_trade.exit_price = price
+        current_trade.pnl = price - current_trade.entry_price
+        current_trade.pnl_pct = current_trade.pnl / current_trade.entry_price
+        current_trade.exit_reason = 'signal'
+        result.trades.append(current_trade)
+        return None
+
+    return current_trade
+
+
+def _signals_calc_metrics(result: BacktestResult) -> None:
+    """计算回测统计指标（就地修改 result）。"""
+    if not result.trades:
+        return
+
+    result.total_trades = len(result.trades)
+    result.win_trades = sum(1 for t in result.trades if t.pnl > 0)
+    result.loss_trades = sum(1 for t in result.trades if t.pnl < 0)
+    result.win_rate = result.win_trades / result.total_trades
+
+    total_profit = sum(t.pnl for t in result.trades if t.pnl > 0)
+    total_loss = abs(sum(t.pnl for t in result.trades if t.pnl < 0))
+    result.profit_factor = total_profit / total_loss if total_loss > 0 else float('inf')
+
+    result.avg_return = sum(t.pnl_pct for t in result.trades) / result.total_trades
+    result.avg_hold_days = sum(t.hold_days for t in result.trades) / result.total_trades
+
+    # 最大回撤
+    peak = 0.0
+    drawdown = 0.0
+    cumulative = 0.0
+    for t in result.trades:
+        cumulative += t.pnl_pct
+        peak = max(peak, cumulative)
+        drawdown = max(drawdown, peak - cumulative)
+    result.max_drawdown = drawdown
+
+    # 总收益率（复利）
+    result.total_return = 1.0
+    for t in result.trades:
+        result.total_return *= (1 + t.pnl_pct)
+    result.total_return -= 1.0
+
+
 def backtest_signals(
     signals: List[Any],
     klines: List[Dict[str, Any]],
@@ -121,32 +218,14 @@ def backtest_signals(
         date = k['trade_date']
         price = k['close']
         day_high = k['high']
-        day_low = k['low']
 
         # 检查止损/止盈（如果持有中）
         if current_trade is not None:
             entry_high = max(entry_high, day_high)
-
-            # 止损
-            if day_low <= current_trade.entry_price * (1 - stop_loss_pct):
-                current_trade.exit_date = date
-                current_trade.exit_price = current_trade.entry_price * (1 - stop_loss_pct)
-                current_trade.pnl = current_trade.exit_price - current_trade.entry_price
-                current_trade.pnl_pct = current_trade.pnl / current_trade.entry_price
-                current_trade.exit_reason = 'stop_loss'
-                result.trades.append(current_trade)
-                current_trade = None
-                continue
-
-            # 止盈
-            if day_high >= current_trade.entry_price * (1 + take_profit_pct):
-                current_trade.exit_date = date
-                current_trade.exit_price = current_trade.entry_price * (1 + take_profit_pct)
-                current_trade.pnl = current_trade.exit_price - current_trade.entry_price
-                current_trade.pnl_pct = current_trade.pnl / current_trade.entry_price
-                current_trade.exit_reason = 'take_profit'
-                result.trades.append(current_trade)
-                current_trade = None
+            current_trade, exited = _signals_check_exit(
+                k, current_trade, result, stop_loss_pct, take_profit_pct
+            )
+            if exited:
                 continue
 
         # 处理当天信号
@@ -154,24 +233,11 @@ def backtest_signals(
         if sig is None:
             continue
 
-        # 买入信号
-        if sig.action == 'BUY' and current_trade is None:
-            current_trade = Trade(
-                ts_code=ts_code,
-                entry_date=date,
-                entry_price=price,
-            )
+        current_trade = _signals_handle_signal(
+            date, price, ts_code, sig, current_trade, result
+        )
+        if current_trade is not None and current_trade.entry_date == date:
             entry_high = price
-
-        # 卖出信号
-        elif sig.action == 'SELL' and current_trade is not None:
-            current_trade.exit_date = date
-            current_trade.exit_price = price
-            current_trade.pnl = price - current_trade.entry_price
-            current_trade.pnl_pct = current_trade.pnl / current_trade.entry_price
-            current_trade.exit_reason = 'signal'
-            result.trades.append(current_trade)
-            current_trade = None
 
     # 数据末尾强制平仓
     if current_trade is not None and klines:
@@ -183,35 +249,7 @@ def backtest_signals(
         current_trade.exit_reason = 'end_of_data'
         result.trades.append(current_trade)
 
-    # 计算统计指标
-    if result.trades:
-        result.total_trades = len(result.trades)
-        result.win_trades = sum(1 for t in result.trades if t.pnl > 0)
-        result.loss_trades = sum(1 for t in result.trades if t.pnl < 0)
-        result.win_rate = result.win_trades / result.total_trades
-
-        total_profit = sum(t.pnl for t in result.trades if t.pnl > 0)
-        total_loss = abs(sum(t.pnl for t in result.trades if t.pnl < 0))
-        result.profit_factor = total_profit / total_loss if total_loss > 0 else float('inf')
-
-        result.avg_return = sum(t.pnl_pct for t in result.trades) / result.total_trades
-        result.avg_hold_days = sum(t.hold_days for t in result.trades) / result.total_trades
-
-        # 最大回撤
-        peak = 0.0
-        drawdown = 0.0
-        cumulative = 0.0
-        for t in result.trades:
-            cumulative += t.pnl_pct
-            peak = max(peak, cumulative)
-            drawdown = max(drawdown, peak - cumulative)
-        result.max_drawdown = drawdown
-
-        # 总收益率（复利）
-        result.total_return = 1.0
-        for t in result.trades:
-            result.total_return *= (1 + t.pnl_pct)
-        result.total_return -= 1.0
+    _signals_calc_metrics(result)
 
     return result
 
@@ -374,6 +412,103 @@ def _calc_stats(result: PortfolioBacktestResult, trading_days: int = 0):
         result.profit_factor = total_profit / total_loss if total_loss > 0 else float('inf')
 
 
+def _multi_check_exit(
+    k: Dict[str, Any],
+    date: str,
+    ts_code: str,
+    position: Position,
+    cash: float,
+    result: PortfolioBacktestResult,
+    stop_loss_pct: float,
+    take_profit_pct: float,
+) -> Tuple[Optional[Position], float, bool]:
+    """检查多策略回测持仓的止损/止盈。返回 (position, cash, exited)。"""
+    day_high = k['high']
+    day_low = k['low']
+
+    if day_low <= position.entry_price * (1 - stop_loss_pct):
+        exit_price = position.entry_price * (1 - stop_loss_pct)
+        pnl = (exit_price - position.entry_price) * position.shares
+        pnl_pct = (exit_price - position.entry_price) / position.entry_price
+        cash += position.shares * exit_price
+        result.trades.append(Trade(
+            ts_code=ts_code,
+            entry_date=position.entry_date,
+            entry_price=position.entry_price,
+            exit_date=date,
+            exit_price=exit_price,
+            pnl=pnl,
+            pnl_pct=pnl_pct,
+            exit_reason='stop_loss',
+        ))
+        return None, cash, True
+
+    if day_high >= position.entry_price * (1 + take_profit_pct):
+        exit_price = position.entry_price * (1 + take_profit_pct)
+        pnl = (exit_price - position.entry_price) * position.shares
+        pnl_pct = (exit_price - position.entry_price) / position.entry_price
+        cash += position.shares * exit_price
+        result.trades.append(Trade(
+            ts_code=ts_code,
+            entry_date=position.entry_date,
+            entry_price=position.entry_price,
+            exit_date=date,
+            exit_price=exit_price,
+            pnl=pnl,
+            pnl_pct=pnl_pct,
+            exit_reason='take_profit',
+        ))
+        return None, cash, True
+
+    return position, cash, False
+
+
+def _multi_handle_signal(
+    date: str,
+    price: float,
+    ts_code: str,
+    top_signal: Any,
+    position: Optional[Position],
+    cash: float,
+    position_pct: float,
+    result: PortfolioBacktestResult,
+) -> Tuple[Optional[Position], float]:
+    """处理多策略回测的买入/卖出信号。返回 (position, cash)。"""
+    if top_signal.action == 'BUY' and position is None:
+        invest_amount = cash * position_pct
+        shares = _calc_shares(invest_amount, price)
+        if shares >= 100:
+            cost = shares * price
+            cash -= cost
+            position = Position(
+                ts_code=ts_code,
+                entry_date=date,
+                entry_price=price,
+                shares=shares,
+                cost_basis=cost,
+                current_price=price,
+                current_value=cost,
+                high_since_entry=price,
+            )
+    elif top_signal.action == 'SELL' and position is not None:
+        cash += position.shares * price
+        pnl = (price - position.entry_price) * position.shares
+        pnl_pct = (price - position.entry_price) / position.entry_price
+        result.trades.append(Trade(
+            ts_code=ts_code,
+            entry_date=position.entry_date,
+            entry_price=position.entry_price,
+            exit_date=date,
+            exit_price=price,
+            pnl=pnl,
+            pnl_pct=pnl_pct,
+            exit_reason='signal',
+        ))
+        position = None
+
+    return position, cash
+
+
 def backtest_multi_strategy(
     ts_code: str,
     days: int = 240,
@@ -424,54 +559,14 @@ def backtest_multi_strategy(
     for k in klines:
         date = k['trade_date']
         price = k['close']
-        day_high = k['high']
-        day_low = k['low']
 
         # 更新持仓市值
         if position is not None:
             position.update_price(price)
-
-            # 止损
-            if day_low <= position.entry_price * (1 - stop_loss_pct):
-                exit_price = position.entry_price * (1 - stop_loss_pct)
-                pnl = (exit_price - position.entry_price) * position.shares
-                pnl_pct = (exit_price - position.entry_price) / position.entry_price
-                cash += position.shares * exit_price
-
-                trade = Trade(
-                    ts_code=ts_code,
-                    entry_date=position.entry_date,
-                    entry_price=position.entry_price,
-                    exit_date=date,
-                    exit_price=exit_price,
-                    pnl=pnl,
-                    pnl_pct=pnl_pct,
-                    exit_reason='stop_loss',
-                )
-                result.trades.append(trade)
-                position = None
-                result.equity_curve.append((date, cash))
-                continue
-
-            # 止盈
-            if day_high >= position.entry_price * (1 + take_profit_pct):
-                exit_price = position.entry_price * (1 + take_profit_pct)
-                pnl = (exit_price - position.entry_price) * position.shares
-                pnl_pct = (exit_price - position.entry_price) / position.entry_price
-                cash += position.shares * exit_price
-
-                trade = Trade(
-                    ts_code=ts_code,
-                    entry_date=position.entry_date,
-                    entry_price=position.entry_price,
-                    exit_date=date,
-                    exit_price=exit_price,
-                    pnl=pnl,
-                    pnl_pct=pnl_pct,
-                    exit_reason='take_profit',
-                )
-                result.trades.append(trade)
-                position = None
+            position, cash, exited = _multi_check_exit(
+                k, date, ts_code, position, cash, result, stop_loss_pct, take_profit_pct
+            )
+            if exited:
                 result.equity_curve.append((date, cash))
                 continue
 
@@ -488,43 +583,9 @@ def backtest_multi_strategy(
 
         # 取最高优先级信号
         top_signal = day_signals[0]
-
-        # 买入信号
-        if top_signal.action == 'BUY' and position is None:
-            invest_amount = cash * position_pct
-            shares = _calc_shares(invest_amount, price)
-            if shares >= 100:
-                cost = shares * price
-                cash -= cost
-                position = Position(
-                    ts_code=ts_code,
-                    entry_date=date,
-                    entry_price=price,
-                    shares=shares,
-                    cost_basis=cost,
-                    current_price=price,
-                    current_value=cost,
-                    high_since_entry=price,
-                )
-
-        # 卖出信号
-        elif top_signal.action == 'SELL' and position is not None:
-            cash += position.shares * price
-            pnl = (price - position.entry_price) * position.shares
-            pnl_pct = (price - position.entry_price) / position.entry_price
-
-            trade = Trade(
-                ts_code=ts_code,
-                entry_date=position.entry_date,
-                entry_price=position.entry_price,
-                exit_date=date,
-                exit_price=price,
-                pnl=pnl,
-                pnl_pct=pnl_pct,
-                exit_reason='signal',
-            )
-            result.trades.append(trade)
-            position = None
+        position, cash = _multi_handle_signal(
+            date, price, ts_code, top_signal, position, cash, position_pct, result
+        )
 
         total_value = cash + (position.current_value if position else 0)
         result.equity_curve.append((date, total_value))
