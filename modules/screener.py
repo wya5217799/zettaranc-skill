@@ -381,31 +381,16 @@ def score_risk(klines: List[Dict]) -> Tuple[float, List[str]]:
     return max(0, min(100, score)), warnings
 
 
-def analyze_stock(ts_code: str, klines: Optional[List[Dict]] = None) -> StockScore:
+def _apply_p2_indicators(
+    klines: List[Dict],
+    b1_reasons: List[str],
+    risk_warnings: List[str],
+    risk_score: float,
+) -> Tuple[str, str, List[str], List[str], float]:
     """
-    综合评分单只股票
+    计算 P2 三波理论 + 麒麟会指标，更新 b1_reasons / risk_warnings / risk_score。
+    返回: (wave_stage, kirin_stage, b1_reasons, risk_warnings, risk_score)
     """
-    if klines is None:
-        klines = get_recent_klines(ts_code)
-
-    if not klines:
-        return StockScore(ts_code=ts_code)
-
-    # 获取股票名称
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT name FROM stock_basic WHERE ts_code = ?", (ts_code,))
-    row = cursor.fetchone()
-    name = row['name'] if row else ts_code
-    conn.close()
-
-    # 计算各项评分
-    b1_score, b1_reasons = score_b1_opportunity(klines)
-    trend_score, trend_dir = score_trend(klines)
-    volume_score, volume_reasons = score_volume_pattern(klines)
-    risk_score, risk_warnings = score_risk(klines)
-
-    # ========== P2 指标：三波理论 + 麒麟会 ==========
     wave_stage = "未知"
     kirin_stage = "未知"
     try:
@@ -449,6 +434,48 @@ def analyze_stock(ts_code: str, klines: Optional[List[Dict]] = None) -> StockSco
             risk_score = max(0, risk_score - 15)
     except Exception:
         pass
+    return wave_stage, kirin_stage, b1_reasons, risk_warnings, risk_score
+
+
+def _adjust_total_score(total_score: float, wave_stage: str, kirin_stage: str) -> float:
+    """三波/麒麟会加权调整综合评分。"""
+    if wave_stage == '建仓波':
+        return min(100, total_score * 1.05)
+    if wave_stage == '冲刺波' or kirin_stage == '派发':
+        return max(0, total_score * 0.7)
+    if kirin_stage == '吸筹':
+        return min(100, total_score * 1.08)
+    return total_score
+
+
+def analyze_stock(ts_code: str, klines: Optional[List[Dict]] = None) -> StockScore:
+    """
+    综合评分单只股票
+    """
+    if klines is None:
+        klines = get_recent_klines(ts_code)
+
+    if not klines:
+        return StockScore(ts_code=ts_code)
+
+    # 获取股票名称
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT name FROM stock_basic WHERE ts_code = ?", (ts_code,))
+    row = cursor.fetchone()
+    name = row['name'] if row else ts_code
+    conn.close()
+
+    # 计算各项评分
+    b1_score, b1_reasons = score_b1_opportunity(klines)
+    trend_score, trend_dir = score_trend(klines)
+    volume_score, volume_reasons = score_volume_pattern(klines)
+    risk_score, risk_warnings = score_risk(klines)
+
+    # ========== P2 指标：三波理论 + 麒麟会 ==========
+    wave_stage, kirin_stage, b1_reasons, risk_warnings, risk_score = _apply_p2_indicators(
+        klines, b1_reasons, risk_warnings, risk_score
+    )
 
     # 综合评分（加权平均）
     # B1机会 30% + 趋势 25% + 量价 25% + 风险 20%
@@ -461,12 +488,7 @@ def analyze_stock(ts_code: str, klines: Optional[List[Dict]] = None) -> StockSco
         b1_reasons.extend(perfect_reasons)
 
     # 三波/麒麟会加权调整
-    if wave_stage == '建仓波':
-        total_score = min(100, total_score * 1.05)
-    elif wave_stage == '冲刺波' or kirin_stage == '派发':
-        total_score = max(0, total_score * 0.7)
-    elif kirin_stage == '吸筹':
-        total_score = min(100, total_score * 1.08)
+    total_score = _adjust_total_score(total_score, wave_stage, kirin_stage)
 
     score = StockScore(
         ts_code=ts_code,
@@ -498,6 +520,106 @@ def _analyze_worker(ts_code: str) -> Optional[Tuple[str, List[Dict], StockScore]
     return ts_code, klines, score
 
 
+def _detect_super_b1(klines: List[Dict], score: StockScore) -> bool:
+    """超级B1战法检测（放量下跌+缩量企稳+J负值）。"""
+    from .strategies import detect_sb1
+    for i in range(max(10, len(klines) - 5), len(klines)):
+        sig = detect_sb1(klines, i)
+        if sig:
+            score.warnings.append(f"超级B1 J={sig.details.get('j', 0):.1f}")
+            return True
+    return False
+
+
+def _detect_changan(klines: List[Dict], score: StockScore) -> bool:
+    """长安战法检测（B1+放量长阳+缩半量）。"""
+    from .strategies import detect_changan
+    for i in range(max(3, len(klines) - 5), len(klines)):
+        sig = detect_changan(klines, i)
+        if sig:
+            score.reasons.append("长安战法 胜率75%")
+            return True
+    return False
+
+
+def _detect_b2_breakout(klines: List[Dict], score: StockScore) -> bool:
+    """B2突破战法检测（涨幅≥4%+放量+J<55+无上影线）。"""
+    from .strategies import detect_b2
+    for i in range(max(15, len(klines) - 5), len(klines)):
+        sig = detect_b2(klines, i)
+        if sig:
+            score.reasons.append(f"B2突破 涨{sig.details.get('pct_chg', 0):.1f}%")
+            return True
+    return False
+
+
+def _detect_b3_consensus(klines: List[Dict], score: StockScore) -> bool:
+    """B3分歧转一致战法检测。"""
+    from .strategies import detect_b3
+    for i in range(max(20, len(klines) - 5), len(klines)):
+        sig = detect_b3(klines, i)
+        if sig:
+            score.reasons.append("B3分歧转一致")
+            return True
+    return False
+
+
+def _filter_advanced_strategy(klines: List[Dict], criteria: str, score: StockScore) -> bool:
+    """
+    高级战法筛选：super_b1 / changan / b2_breakout / b3_consensus。
+    detect_* 需要含 is_beidou / is_suoliang 等派生字段的"富"K线。get_recent_klines
+    现已统一返回富 dict（见 modules.kline_data），klines 本身即可直接喂给 detect_*，
+    无需再向 strategies.core 二次取数（旧 thin→rich 二次取数正是 KeyError 之源）。
+    """
+    if not klines:
+        return False
+    if criteria == "super_b1":
+        return _detect_super_b1(klines, score)
+    if criteria == "changan":
+        return _detect_changan(klines, score)
+    if criteria == "b2_breakout":
+        return _detect_b2_breakout(klines, score)
+    if criteria == "b3_consensus":
+        return _detect_b3_consensus(klines, score)
+    return False
+
+
+def _filter_p2_strategy(klines: List[Dict], criteria: str, score: StockScore) -> bool:
+    """P2 指标选股策略：build_wave / xishou / safe。"""
+    from .indicators import DailyData, detect_three_waves, detect_kirin_stage
+    daily_klines = []
+    for i, k in enumerate(klines):
+        prev_close = klines[i-1]['close'] if i > 0 else k['close']
+        daily_klines.append(DailyData(
+            ts_code=k['ts_code'],
+            trade_date=k['trade_date'],
+            open=k['open'],
+            high=k['high'],
+            low=k['low'],
+            close=k['close'],
+            vol=k['vol'],
+            amount=k.get('amount', k['close'] * k['vol']),
+            pct_chg=k.get('pct_chg', 0),
+            prev_close=prev_close,
+        ))
+    wave = detect_three_waves(daily_klines)
+    kirin = detect_kirin_stage(daily_klines)
+
+    if criteria == "build_wave" and wave['wave'] == '建仓波' and wave['confidence'] >= 0.5:
+        score.reasons.append(f"建仓波(conf={wave['confidence']})")
+        return True
+    if criteria == "xishou" and kirin['stage'] == '吸筹' and kirin['confidence'] >= 0.5:
+        score.reasons.append(f"吸筹({kirin['sub_type']}, conf={kirin['confidence']})")
+        return True
+    if criteria == "safe":
+        is_safe = (wave['wave'] != '冲刺波' and
+                   kirin['stage'] not in ('派发', '回落'))
+        if is_safe:
+            score.reasons.append(f"安全：{wave['wave']}+{kirin['stage']}")
+            return True
+    return False
+
+
 def _filter_stock(result: Tuple[str, List[Dict], StockScore], criteria: str) -> bool:
     """
     判断单只股票是否满足选股条件
@@ -508,82 +630,20 @@ def _filter_stock(result: Tuple[str, List[Dict], StockScore], criteria: str) -> 
     # 基础选股策略
     if criteria == "b1" and score.b1_score >= 50:
         return True
-    elif criteria == "perfect" and score.score >= 65:
+    if criteria == "perfect" and score.score >= 65:
         return True
-    elif criteria == "oversold" and score.trend_score <= 40:
+    if criteria == "oversold" and score.trend_score <= 40:
         return True
-    elif criteria == "breakout" and score.volume_score >= 70:
+    if criteria == "breakout" and score.volume_score >= 70:
         return True
 
     # 高级选股策略（基于战法检测）
-    # detect_* 需要含 is_beidou / is_suoliang 等派生字段的"富"K线。get_recent_klines
-    # 现已统一返回富 dict（见 modules.kline_data），klines 本身即可直接喂给 detect_*，
-    # 无需再向 strategies.core 二次取数（旧 thin→rich 二次取数正是 KeyError 之源）。
-    elif criteria in ("super_b1", "changan", "b2_breakout", "b3_consensus"):
-        if not klines:
-            return False
-        if criteria == "super_b1":
-            from .strategies import detect_sb1
-            for i in range(max(10, len(klines) - 5), len(klines)):
-                sig = detect_sb1(klines, i)
-                if sig:
-                    score.warnings.append(f"超级B1 J={sig.details.get('j', 0):.1f}")
-                    return True
-        elif criteria == "changan":
-            from .strategies import detect_changan
-            for i in range(max(3, len(klines) - 5), len(klines)):
-                sig = detect_changan(klines, i)
-                if sig:
-                    score.reasons.append("长安战法 胜率75%")
-                    return True
-        elif criteria == "b2_breakout":
-            from .strategies import detect_b2
-            for i in range(max(15, len(klines) - 5), len(klines)):
-                sig = detect_b2(klines, i)
-                if sig:
-                    score.reasons.append(f"B2突破 涨{sig.details.get('pct_chg', 0):.1f}%")
-                    return True
-        elif criteria == "b3_consensus":
-            from .strategies import detect_b3
-            for i in range(max(20, len(klines) - 5), len(klines)):
-                sig = detect_b3(klines, i)
-                if sig:
-                    score.reasons.append("B3分歧转一致")
-                    return True
+    if criteria in ("super_b1", "changan", "b2_breakout", "b3_consensus"):
+        return _filter_advanced_strategy(klines, criteria, score)
 
     # P2 指标选股策略
-    elif criteria in ("build_wave", "xishou", "safe"):
-        from .indicators import DailyData, detect_three_waves, detect_kirin_stage
-        daily_klines = []
-        for i, k in enumerate(klines):
-            prev_close = klines[i-1]['close'] if i > 0 else k['close']
-            daily_klines.append(DailyData(
-                ts_code=k['ts_code'],
-                trade_date=k['trade_date'],
-                open=k['open'],
-                high=k['high'],
-                low=k['low'],
-                close=k['close'],
-                vol=k['vol'],
-                amount=k.get('amount', k['close'] * k['vol']),
-                pct_chg=k.get('pct_chg', 0),
-                prev_close=prev_close,
-            ))
-        wave = detect_three_waves(daily_klines)
-        kirin = detect_kirin_stage(daily_klines)
-
-        if criteria == "build_wave" and wave['wave'] == '建仓波' and wave['confidence'] >= 0.5:
-            score.reasons.append(f"建仓波(conf={wave['confidence']})")
-            return True
-        elif criteria == "xishou" and kirin['stage'] == '吸筹' and kirin['confidence'] >= 0.5:
-            score.reasons.append(f"吸筹({kirin['sub_type']}, conf={kirin['confidence']})")
-            return True
-        elif criteria == "safe":
-            is_safe = (wave['wave'] != '冲刺波' and
-                       kirin['stage'] not in ('派发', '回落'))
-            if is_safe:
-                score.reasons.append(f"安全：{wave['wave']}+{kirin['stage']}")
-                return True
+    if criteria in ("build_wave", "xishou", "safe"):
+        return _filter_p2_strategy(klines, criteria, score)
 
     return False
 
