@@ -12,7 +12,7 @@ requires-python = ">=3.10"
 authors = [
     {name = "zettaranc-skill contributors"}
 ]
-keywords = ["trading", "quantitative", "tushare", "technical-indicators", "bili"]
+keywords = ["trading", "quantitative", "akshare", "technical-indicators", "bili"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Financial and Insurance Industry",
@@ -24,15 +24,23 @@ classifiers = [
 ]
 
 dependencies = [
-    "yt-dlp>=2024.1.0",
-    "faster-whisper>=1.0.0",
-    "tushare>=1.4.0",
-    "python-dotenv>=1.0.0",
-    "pandas>=2.0.0",
-    "requests>=2.28.0",
+    "akshare>=1.14.0",      # 默认数据源：免 token 现拉日线
+    "pandas>=2.0.0",        # 数据处理
+    "pyarrow>=14.0.0",      # 读取 qcore 本地 Parquet 数据湖
+    "python-dotenv>=1.0.0", # .env 配置加载
+    "requests>=2.28.0",     # HTTP
 ]
 
 [project.optional-dependencies]
+# Tushare 后端（DATA_MODE=jnb，已休眠保留）。见 docs/adr/0001-retire-tushare-backend.md
+jnb = [
+    "tushare>=1.4.0",
+]
+# 语料采集工具（下载/转写 B 站音频，跑行情用不到）
+corpus = [
+    "yt-dlp>=2024.1.0",
+    "faster-whisper>=1.0.0",
+]
 dev = [
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",

@@ -1,6 +1,6 @@
 """
 数据同步模块
-从 Tushare API 获取数据并存储到 SQLite
+从数据源（akshare 现拉 / qcore 数据湖 / jnb Tushare）获取数据并存储到 SQLite
 支持增量更新和全量更新
 """
 
@@ -13,9 +13,9 @@ from datetime import datetime, timedelta
 from typing import List, Optional, Dict, Any
 
 try:
-    import tushare as ts
+    import tushare as ts  # 可选后端（DATA_MODE=jnb）；免费模式无需安装
 except ImportError:
-    print("请先安装依赖: pip install tushare")
+    ts = None
 
 # dotenv 加载已移至 modules/__init__.py（包级别一次性加载，override=True）
 
@@ -48,23 +48,28 @@ class DataSyncer:
             from .qcore_lake_client import QcoreLakeClient
             self.source_client = QcoreLakeClient()
             self.pro = None
-        else:
-            # 仅在 JNB 模式下强制检查 Tushare 配置
-            if self.data_mode == 'jnb':
-                if not self.token:
-                    raise ValueError(
-                        "JNB 模式下未设置 TUSHARE_TOKEN，请检查 .env 文件。"
-                    )
-                if not TUSHARE_API_URL:
-                    raise ValueError(
-                        "JNB 模式下未设置 TUSHARE_API_URL，请在 .env 中配置中转 API 地址。\n"
-                        "示例：TUSHARE_API_URL=https://tt.xiaodefa.cn"
-                    )
-
-            # 初始化 Tushare
+        elif self.data_mode == 'jnb':
+            # JNB(Tushare) 模式：强制检查配置
+            if not self.token:
+                raise ValueError(
+                    "JNB 模式下未设置 TUSHARE_TOKEN，请检查 .env 文件。"
+                )
+            if not TUSHARE_API_URL:
+                raise ValueError(
+                    "JNB 模式下未设置 TUSHARE_API_URL，请在 .env 中配置中转 API 地址。\n"
+                    "示例：TUSHARE_API_URL=https://tt.xiaodefa.cn"
+                )
+            if ts is None:
+                raise ImportError(
+                    "jnb 模式需要 Tushare：pip install \"zettaranc-skill[jnb]\"（或 pip install tushare）。\n"
+                    "若只想免 token 跑行情，请在 .env 设 DATA_MODE=akshare。"
+                )
             ts.set_token(self.token)
             self.pro = ts.pro_api()
             self.pro._DataApi__http_url = TUSHARE_API_URL
+        else:
+            # websearch / 未知模式：无行情后端，不初始化 Tushare（读 SQLite 的命令如 status 仍可用）
+            self.pro = None
 
         # 限流控制：120次/分钟
         self.min_interval = 60 / 120

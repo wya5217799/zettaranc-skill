@@ -9,20 +9,24 @@
 
 本项目是一个**AI Skill（思维框架蒸馏包）+ 真实数据量化工具**的混合体。
 
-核心目标：将 B 站 UP 主 / 前阳光私募冠军基金经理 zettaranc（万千）的投资思维框架、决策启发式和表达 DNA，封装为可供 Claude Code / Cursor 等 AI 工具调用的 Skill 文件（`SKILL.md`），同时提供基于真实 Tushare 行情数据的 Python 数据层支撑。
+核心目标：将 B 站 UP 主 / 前阳光私募冠军基金经理 zettaranc（万千）的投资思维框架、决策启发式和表达 DNA，封装为可供 Claude Code / Cursor 等 AI 工具调用的 Skill 文件（`SKILL.md`），同时提供基于真实免费行情数据（akshare 现拉 / qcore 本机数据湖；Tushare 已休眠保留）的 Python 数据层支撑。
 
 - **核心交付物**：`SKILL.md`（可直接被 AI 工具加载的角色扮演协议）
-- **数据层**：Python 模块 + SQLite 数据库 + Tushare API（JNB 模式）
+- **数据层**：Python 模块 + SQLite 数据库 + 免费数据源（akshare 现拉 / qcore 数据湖；Tushare 休眠保留）
 - **语料基础**：约 467 篇直播/付费课整理文章（~200 万字）+ 13 个 ztalk 视频 transcript（~12.7 万字）+ 9 篇交易心理系列（~3.3 万字）+ 15 篇 2026.4-5 月新增文章
 - **许可证**：MIT
-- **版本**：当前 v2.7.0，采用语义化版本
+- **版本**：当前 v2.9.0，采用语义化版本
 
-### 双模式架构
+### 数据模式（DATA_MODE）
 
-| 模式 | 环境变量 | 说明 |
-|------|---------|------|
-| **JNB 模式** | `DATA_MODE=jnb` | 接入 Tushare 真实行情，具备实时数据查询、技术指标计算、战法识别能力 |
-| **普通小万** | `DATA_MODE=websearch` | 纯 LLM 对话，不走任何外部数据接口 |
+| 取值 | 说明 |
+|------|------|
+| `akshare` | **默认**，免 token 现拉前复权日线，开箱即用 |
+| `qcore` | 读本机 Parquet 数据湖（需 `QCORE_DATA_DIR`），秒级、离线 |
+| `jnb` | 走 Tushare API（**已休眠保留**，需 Token + 中转 URL，见 ADR-0001） |
+| `websearch` | 纯 LLM 对话，不取行情数据 |
+
+> `akshare`/`qcore` 同源（缓存 vs 现拉），不拆独立「数据源」轴，见 [ADR-0002](docs/adr/0002-flat-data-mode.md)。
 
 架构分层：
 
@@ -62,37 +66,36 @@ Python 数据层（modules/）              LLM 角色层（SKILL.md）
 | 层级 | 技术 |
 |------|------|
 | 数据管道 | Python 3.14（标准库 + `sqlite3`、`pathlib`、`dataclasses`、`enum`） |
-| 外部数据 | `tushare`（Pro API，支持中转 URL）、`pandas`、`requests` |
+| 外部数据 | `akshare`（默认，免 token 现拉）、`pyarrow`（qcore 数据湖）、`pandas`、`requests`；`tushare` 为可选休眠后端 |
 | 环境配置 | `python-dotenv`（`.env` 文件） |
 | 数据库 | SQLite（本地文件，8 张表，26 万+ 条真实数据） |
-```ini
-DATA_MODE=jnb
-TUSHARE_TOKEN=你...n | 测试框架 | `pytest`（264 用例） |
-| 视频下载 | `yt-dlp`（语料采集） |
-| 语音转写 | `faster-whisper`（语料采集） |
+| 测试框架 | `pytest`（347 用例） |
+| 视频下载 | `yt-dlp`（语料采集，可选） |
+| 语音转写 | `faster-whisper`（语料采集，可选） |
 | 文档格式 | Markdown（全部文档与语料） |
 | 版本控制 | Git |
 
 ### 配置说明
 
-**`requirements.txt`**：
+**`requirements.txt`**（运行核心；Tushare 与语料工具改为可选 extras）：
 ```
-yt-dlp>=2024.1.0
-faster-whisper>=1.0.0
-tushare>=1.4.0
+akshare>=1.14.0
+pandas>=2.0.0
+pyarrow>=14.0.0
 python-dotenv>=1.0.0
+requests>=2.28.0
 ```
 
 **`pyproject.toml`**：定义 `pip install -e .` 可安装为本地包，注册 `zt` 命令。
 
 **`.env.example`** 环境变量模板：
 ```ini
-DATA_MODE=jnb
-TUSHARE_TOKEN=你的56位token
-TUSHARE_API_URL=需要配置中转地址
-TUSHARE_VERIFY_TOKEN_URL=
+# akshare(免token,推荐) / qcore(本机数据湖) / jnb(Tushare,休眠) / websearch
+DATA_MODE=akshare
+# QCORE_DATA_DIR=/path/to/量化交易/data   # 仅 qcore 模式必填
 DATA_DIR=data
 DB_PATH=data/stock_data.db
+# LLM_API_KEY=                            # 可选
 ```
 
 > v2.1.1 之后，所有 Tushare URL 均从环境变量读取，代码中不再硬编码任何内部域名。
@@ -124,7 +127,7 @@ zettaranc-skill/
 ├── modules/                    # Python 代码模块（~6800 行）
 │   ├── __init__.py             # 包导出 + get_data_mode() + dotenv 统一加载
 │   ├── database.py             # SQLite 数据库管理：8 张表、事务上下文、CRUD
-│   ├── data_sync.py            # Tushare 数据同步器：增量/全量、限流 120次/分
+│   ├── data_sync.py            # 多源数据同步器（akshare/qcore/jnb）：增量/全量、jnb 限流 120次/分
 │   ├── indicators/             # 技术指标计算引擎：60+ 指标（6 子模块）
 │   │   ├── core.py             # 基础类型 + 数学工具 + 核心指标
 │   │   ├── price_patterns.py   # 价格形态（双线/单针/砖型图/B1/B2/B3/图形识别）
@@ -141,7 +144,7 @@ zettaranc-skill/
 │   ├── trade_parser.py         # 随堂测试解析器：口语化/JSON/CSV 多格式输入
 │   ├── trade_manager.py        # 交易记录 CRUD、持仓计算、盈亏统计
 │   ├── trade_reviewer.py       # 交割单数据准备层：ReviewContext → LLM 提示词
-│   ├── setup_wizard.py         # 初始化向导：JNB/websearch 双模式切换、API 连通性测试
+│   ├── setup_wizard.py         # 初始化向导：akshare/qcore/jnb/websearch 四模式切换、API 连通性测试
 │   └── zettaranc_voice.py      # Z哥语料库 V3.0 + LLM 提示词模板
 ├── knowledge/                  # 知识文档（14+ 篇交易体系）
 │   ├── trading-core.md         # 四层交易结构、少妇战法 SOP、B1/B2/B3、量比战法
@@ -158,7 +161,7 @@ zettaranc-skill/
 │   ├── advanced-patterns.md    # 长安战法、平行重炮、对称 VA
 │   ├── data_dictionary.md      # 输入数据字典（DailyBar/MoneyFlow/Financial）
 │   └── signal_dictionary.md    # 输出信号字典
-├── tests/                      # 单元测试（pytest，261 用例）
+├── tests/                      # 单元测试（pytest，347 用例）
 │   ├── conftest.py             # 测试基础设施：临时数据库 fixture、K线工厂函数
 │   ├── test_database.py        # 数据库初始化、连接、事务、表增删、幂等性
 │   ├── test_indicators.py      # 56+ 指标计算测试
@@ -230,7 +233,7 @@ pip install -e .
 ### 运行测试
 
 ```bash
-# 全部测试（预期：261 passed, 1 skipped）
+# 全部测试（预期：347 passed, 1 skipped）
 python -m pytest tests/ -v
 
 # 单文件测试
@@ -347,7 +350,7 @@ python scripts/quality_check.py SKILL.md
 
 ```bash
 $ python -m pytest tests/ -v
-# 预期：261 passed, 1 skipped
+# 预期：347 passed, 1 skipped
 ```
 
 ---
@@ -408,7 +411,7 @@ $ python -m pytest tests/ -v
 | 验证风格一致性 | 对照「风格验证清单」逐项检查 |
 | 修复数据层 bug | 修改 `modules/*.py` → 补充/更新 `tests/test_*.py` → `pytest tests/ -v` |
 | 接入新 Tushare 接口 | 修改 `scripts/fetch_tushare_data.py` 或 `modules/tushare_client.py` → 确认表结构支持 → 补充保存逻辑 |
-| 初始化全新环境 | `cp .env.example .env` → 填入 Token → `python -m modules.database` → `python -m modules.data_sync sync` → `pytest tests/ -v` |
+| 初始化全新环境 | `cp .env.example .env`（默认 akshare 免 token）→ `python -m modules.database` → `python -m modules.data_sync sync` → `pytest tests/ -v` |
 
 ---
 

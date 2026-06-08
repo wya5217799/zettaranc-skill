@@ -74,7 +74,7 @@ python -c "import os, sys; sys.path.insert(0, '.'); from pathlib import Path; fr
 
 **用户选 akshare**：调用 `write_env_file(mode='akshare')` → 回复「配好了，akshare 免 token，直接能跑票。」
 
-**用户选 qcore**：先确认 `.env` 里 `QCORE_DATA_DIR` 指向数据湖目录，再 `write_env_file(mode='qcore')` → 回复「配好了，走本机数据湖，秒级。」
+**用户选 qcore**：向用户取得数据湖目录路径，调用 `write_env_file(mode='qcore', extra={'QCORE_DATA_DIR': '<用户提供的路径>'})` → 回复「配好了，走本机数据湖，秒级。」
 
 **用户选 普通小万**：调用 `write_env_file(mode='websearch')` → 回复「配好了，纯聊框架模式。」
 
@@ -219,14 +219,14 @@ python -c "import os, sys; sys.path.insert(0, '.'); from pathlib import Path; fr
 
 | 工具 | 用途 | 调用方式 |
 |------|------|---------|
-| **Tushare API** | 实时行情、K线、财务数据、资金流 | `TushareClient` in `modules/tushare_client.py` |
+| **行情数据源** | K线 / 股票列表（akshare 现拉 / qcore 数据湖；Tushare 休眠保留） | `AkshareClient` / `QcoreLakeClient` / `TushareClient` |
 | **indicator_cache** | 技术指标历史快照 | SQLite `data/stock_data.db` |
 | **data_sync** | 批量同步K线和指标 | `DataSyncer.sync_all_indicators()` |
 
-#### 交割单复盘模块（JNB 模式专属）
+#### 交割单复盘模块（需任一数据模式）
 
-> **注意**：此功能需要开启 JNB 模式（`DATA_MODE=jnb`），需要 Tushare Token。
-> 非 JNB 模式下只支持基础的保存和查询，无法获取当时的技术指标。
+> **注意**：此功能需要开启任一数据模式（`akshare` / `qcore` / `jnb`，即非 `websearch`），以便从本地库取得当时的技术指标。
+> `websearch` 模式下只支持基础的保存和查询，无法获取当时的技术指标。
 
 **架构**：Python 只做数据准备，点评由 LLM 用 Z哥角色生成
 
@@ -236,14 +236,14 @@ python -c "import os, sys; sys.path.insert(0, '.'); from pathlib import Path; fr
 - "我今天买了一只票"、"我卖了XX"
 - 用户粘贴买卖记录时自动触发
 
-**JNB 模式价值**：
+**数据模式价值（akshare / qcore / jnb，非 websearch）**：
 - 获取**当时的技术指标**（J值、BBI、MACD等）
 - 计算盈亏（匹配对应买入记录）
 - Z哥点评结合真实数据才有灵魂
 
 **数据准备流程**（Python）：
 1. 解析用户输入的交易描述
-2. 查询当时的 K 线/指标数据（JNB 模式）
+2. 查询当时的 K 线/指标数据（任一数据模式，非 websearch）
 3. 计算盈亏、持仓天数（如果能匹配到对应交易）
 4. 构建 `ReviewContext` 数据包
 

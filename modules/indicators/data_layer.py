@@ -201,7 +201,10 @@ def clear_indicator_memory_cache():
     _indicator_memory_cache.clear()
 def get_kline_data(ts_code: str, days: int = 100) -> List[DailyData]:
     """
-    获取K线数据
+    获取K线数据（按日期升序，最近 days 根）
+
+    取数逻辑已收敛到 modules.kline_data（单一窗口/排序/DB 不变式）。
+    本函数保留为 indicators 层的 DailyData 适配入口。
 
     Args:
         ts_code: 股票代码
@@ -210,41 +213,8 @@ def get_kline_data(ts_code: str, days: int = 100) -> List[DailyData]:
     Returns:
         K线数据列表（按日期升序）
     """
-    conn = get_db_connection()
-    cursor = conn.cursor()
-
-    cursor.execute("""
-        SELECT ts_code, trade_date, open, high, low, close, vol, amount, pct_chg
-        FROM (
-            SELECT ts_code, trade_date, open, high, low, close, vol, amount, pct_chg
-            FROM daily_kline
-            WHERE ts_code = ?
-            ORDER BY trade_date DESC
-            LIMIT ?
-        )
-        ORDER BY trade_date ASC
-    """, (ts_code, days))
-
-    rows = cursor.fetchall()
-    conn.close()
-
-    data_list = []
-    for i, row in enumerate(rows):
-        prev_close = rows[i-1]['close'] if i > 0 else row['close']
-        data_list.append(DailyData(
-            ts_code=row['ts_code'],
-            trade_date=row['trade_date'],
-            open=row['open'],
-            high=row['high'],
-            low=row['low'],
-            close=row['close'],
-            vol=row['vol'],
-            amount=row['amount'],
-            pct_chg=row['pct_chg'],
-            prev_close=prev_close
-        ))
-
-    return data_list
+    from ..kline_data import fetch_daily_data
+    return fetch_daily_data(ts_code, days)
 def get_realtime_data(ts_code: str) -> Optional[DailyData]:
     """
     获取实时/最新行情数据

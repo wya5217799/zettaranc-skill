@@ -107,6 +107,8 @@ pip install -r requirements.txt
 ```
 
 > 安装完成后会注册 `zt` 命令（`zt analyze`、`zt screen`、`zt watchlist`、`zt diagnose`）。如不安装，也可直接 `python -m modules.cli` 调用。
+>
+> 默认依赖即可跑 `akshare`（免 token）与 `qcore`（本机数据湖）。可选后端/工具：Tushare 后端 `pip install "tushare>=1.4.0"`；语料采集 `pip install "yt-dlp>=2024.1.0" "faster-whisper>=1.0.0"`。
 
 ### 2. 配置
 
@@ -114,24 +116,18 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-编辑 `.env`：
+默认即用 **akshare**（免 token，开箱即用），通常无需改动。`.env` 关键项：
 
 ```ini
-DATA_MODE=jnb
-TUSHARE_TOKEN=你...n
-> **数据模式**：`DATA_MODE=jnb` 时必须配置 Tushare Token 和 API URL；`DATA_MODE=websearch` 时可留空。
-> 
-> **Token 获取**：前往 [Tushare 官网](https://tushare.pro/user/token) 注册。
-> 
-> **中转 API**：需要配置中转地址，可从 Tushare 中转服务商获取。
-> 
-> **LLM 配置**：可选，配置 `LLM_API_KEY` 后可使用 LLM 生成回答；未配置时仅显示意图识别结果。
-> 
-> **向量知识库**：默认关闭，设置 `KB_ENABLED=true` 并配置 `KB_API_URL` 可开启 RAG 检索。
+# akshare(免token现拉,推荐) / qcore(本机数据湖,最快) / jnb(Tushare,休眠) / websearch(纯对话)
+DATA_MODE=akshare
+```
 
-> **Token 获取**：前往 [Tushare 官网](https://tushare.pro/user/token) 注册。
-> 
-> **中转 API**：需要配置中转地址，可从 Tushare 中转服务商获取。
+> **数据模式**：默认 `akshare`，免 token 开箱即用。本机若有 qcore 数据湖，设 `DATA_MODE=qcore` 并填 `QCORE_DATA_DIR` 可秒级取数。`DATA_MODE=jnb`（Tushare）已**休眠保留**，需 `pip install "tushare>=1.4.0"` 并配置 Token + 中转 URL（见 [ADR-0001](docs/adr/0001-retire-tushare-backend.md)）；`websearch` 为纯对话，不取行情。
+>
+> **LLM 配置**：可选，配置 `LLM_API_KEY` 后可用 LLM 生成回答；未配置时仅显示意图识别结果。
+>
+> **向量知识库**：默认关闭，设置 `KB_ENABLED=true` 并配置 `KB_API_URL` 可开启 RAG 检索。
 
 ### 3. 初始化
 
@@ -149,7 +145,7 @@ python -m modules.data_sync sync --ts_code 600487.SH --days 120
 ### 4. 验证
 
 ```bash
-# 运行测试（261 passed, 1 skipped）
+# 运行测试（347 passed, 1 skipped）
 python -m pytest tests/ -v
 
 # 分析一只股票
@@ -320,12 +316,16 @@ for k in klines[-5:]:
 
 ## 架构说明
 
-### 双模式架构
+### 数据模式（DATA_MODE）
 
-| 模式 | 环境变量 | 说明 |
-|------|---------|------|
-| **JNB 模式** | `DATA_MODE=jnb` | 接入 Tushare 真实行情，具备实时数据查询、技术指标计算、战法识别能力 |
-| **普通小万** | `DATA_MODE=websearch` | 纯 LLM 对话，不走任何外部数据接口 |
+| 取值 | 说明 |
+|------|------|
+| `akshare` | **默认**，免 token 从公开源（新浪）现拉前复权日线，开箱即用 |
+| `qcore` | 读本机 Parquet 数据湖（需 `QCORE_DATA_DIR`），秒级、离线、约 7 年历史 |
+| `jnb` | 走 Tushare API（**已休眠保留**，需 `pip install "tushare>=1.4.0"` + Token + 中转 URL，见 ADR-0001） |
+| `websearch` | 纯 LLM 对话，不取任何行情数据 |
+
+> `akshare` 与 `qcore` 同源（qcore 是 akshare 前复权日线的本地缓存），是「同一份数据的现拉 vs 本地缓存」两种取数策略，而非两个数据提供商。为何不拆出独立的「数据源」轴，见 [ADR-0002](docs/adr/0002-flat-data-mode.md)。
 
 ### 项目结构
 
@@ -373,7 +373,7 @@ zettaranc-skill/
 │   ├── setup_wizard.py         # 初始化配置向导
 │   └── zettaranc_voice.py      # 语料库 / LLM 提示词模板
 ├── knowledge/                  # 知识文档（14篇交易体系）
-├── tests/                      # 单元测试（pytest，264 用例）
+├── tests/                      # 单元测试（pytest，347 用例）
 └── scripts/                    # 工具脚本
 ```
 
@@ -405,7 +405,7 @@ zettaranc-skill/
                                 ↓
                               回复
 
-Tushare API → data_sync → SQLite → indicators/ → strategies/ → backtest/
+数据源(akshare 现拉 / qcore 数据湖 / Tushare 休眠) → data_sync → SQLite → indicators/ → strategies/ → backtest/
                                                         ↓
                                               SKILL.md (LLM 角色层)
 ```

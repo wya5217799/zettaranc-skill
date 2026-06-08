@@ -49,4 +49,4 @@ _Avoid_: 把 Tushare 当成任何功能的必需项
 ## Flagged ambiguities
 
 - 「akshare/qcore 没有那些数据」混淆了 **Source 封装覆盖**(我们的 client 只实现 2 个方法)与 **Source 数据可得性**(湖/库其实持有远更多)。已澄清:数据存在,只是封装薄。
-- 「qcore 模式」vs「qcore 数据源」—— `DATA_MODE=qcore` 是个 Mode 取值,但 qcore 本质是 Source。已澄清:保留 JNB 作为 Mode;qcore/akshare 是它背后的 Source。
+- 「qcore 模式」vs「qcore 数据源」—— `DATA_MODE=qcore` 是个 Mode 取值,但 qcore 本质是 Source。**已定(2026-06-08 grill):不拆独立 Source 轴**,DATA_MODE 保持单一扁平枚举 `jnb|qcore|akshare|websearch`。理由:qcore 与 akshare 同源(缓存 vs 现拉)、Tushare 休眠且无盘中接口 —— 真实数据源只有一族,为「一轴半」的来源拆出 DATA_SOURCE 属于过度抽象。枚举里 qcore/akshare 并列,语义是「同一份数据的本地缓存 vs 现拉」两种取数策略,非两个数据提供商。详见 [ADR-0002](docs/adr/0002-flat-data-mode.md)。

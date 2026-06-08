@@ -1,6 +1,6 @@
 # zettaranc-skill 使用手册 & 操作手册
 
-> 版本：v2.6.0 | 更新日期：2026-05-30
+> 版本：v2.9.0 | 更新日期：2026-05-30
 > 
 > 面向用户：想使用此项目做量化分析的人
 
@@ -34,21 +34,25 @@
 
 zettaranc-skill 是一个**AI 思维框架蒸馏包 + 真实数据量化工具**的混合系统。
 
-核心目标：将 B 站 UP 主 / 前阳光私募冠军基金经理 zettaranc（万千）的投资思维框架、决策启发式和表达 DNA，封装为可供 AI 工具（Claude Code / Cursor / Hermes Agent）调用的 Skill 文件（`SKILL.md`），同时提供基于真实 Tushare 行情数据的 Python 量化分析层。
+核心目标：将 B 站 UP 主 / 前阳光私募冠军基金经理 zettaranc（万千）的投资思维框架、决策启发式和表达 DNA，封装为可供 AI 工具（Claude Code / Cursor / Hermes Agent）调用的 Skill 文件（`SKILL.md`），同时提供基于真实免费行情数据（akshare 现拉 / qcore 数据湖；Tushare 已休眠保留）的 Python 量化分析层。
 
-### 1.1 双模式架构
+### 1.1 数据模式（DATA_MODE）
 
-| 模式 | 环境变量 | 说明 |
-|------|---------|------|
-| **JNB 模式** | `DATA_MODE=jnb` | 接入 Tushare 真实行情，60+ 技术指标实时计算，30+ 战法自动识别，选股、回测、持仓诊断全开 |
-| **普通小万** | `DATA_MODE=websearch` | 纯 LLM 对话模式，不走任何外部数据接口，只聊框架和逻辑 |
+| 取值 | 说明 |
+|------|------|
+| `akshare` | **默认**，免 token 现拉前复权日线；60+ 指标、30+ 战法、选股/回测/诊断全开 |
+| `qcore` | 本机 Parquet 数据湖（需 `QCORE_DATA_DIR`），秒级、离线、约 7 年历史；功能同 akshare |
+| `jnb` | 接入 Tushare 真实行情（**已休眠保留**，需 Token + 中转 URL，见 ADR-0001） |
+| `websearch` | 纯 LLM 对话模式，不走任何外部数据接口，只聊框架和逻辑 |
+
+> `akshare`/`qcore` 同源（缓存 vs 现拉），不拆独立「数据源」轴，见 [ADR-0002](adr/0002-flat-data-mode.md)。
 
 ### 1.2 架构分层
 
 ```
-Tushare API（真实行情）
+数据源（akshare 现拉 / qcore 数据湖 / Tushare 休眠）
     ↓
-data_sync.py（数据同步：日线/资金流/财报/指标）
+data_sync.py（数据同步：日线/指标）
     ↓
 SQLite（本地缓存：8 张核心表，26 万+ 条数据）
     ↓
@@ -70,11 +74,11 @@ SKILL.md（LLM 角色层：Z 哥视角点评、多轮问诊、表达 DNA）
 | 层级 | 技术 |
 |------|------|
 | 数据管道 | Python 3.14（标准库 + sqlite3 + pathlib + dataclasses + enum） |
-| 外部数据 | tushare Pro API（中转 https://tt.xiaodefa.cn） |
+| 外部数据 | akshare（默认，免 token 现拉）/ pyarrow（qcore 数据湖）；tushare 为可选休眠后端 |
 | 数据库 | SQLite（本地文件，8 张表 + 索引） |
-| 数据处理 | pandas（Tushare 依赖） |
+| 数据处理 | pandas |
 | 环境配置 | python-dotenv（.env 文件） |
-| 测试框架 | pytest（261 用例） |
+| 测试框架 | pytest（347 用例） |
 | 版本控制 | Git |
 
 ---
@@ -100,30 +104,31 @@ cp .env.example .env
 编辑 `.env` 文件：
 
 ```ini
-# 数据模式: jnb(走Tushare API) 或 websearch(走网络搜索)
-DATA_MODE=jnb
+# akshare(免token,推荐) / qcore(本机数据湖) / jnb(Tushare,休眠) / websearch(纯对话)
+DATA_MODE=akshare
 
-# Tushare API 配置
-TUSHARE_TOKEN=你的56位token
-# Tushare 中转 API 地址
-TUSHARE_API_URL=https://tt.xiaodefa.cn
+# qcore 数据湖目录（仅 DATA_MODE=qcore 时必填）
+# QCORE_DATA_DIR=/path/to/量化交易/data
 
 # 数据库配置
 DATA_DIR=data
 DB_PATH=data/stock_data.db
 ```
 
-> **Token 获取**：前往 https://tushare.pro/user/token 复制你的 56 位 token。
-> 
-> **中转 API**：本项目使用 `https://tt.xiaodefa.cn` 中转服务，无需高级积分，限流 120 次/分钟。
+> **默认 akshare**：免 token，开箱即用，无需任何注册。
+>
+> **qcore（可选，最快）**：本机若有 量化交易 数据湖，设 `DATA_MODE=qcore` 并把 `QCORE_DATA_DIR` 指向其 `data/` 目录。
+>
+> **jnb（可选，休眠保留）**：需 `pip install "tushare>=1.4.0"`，并在 https://tushare.pro/user/token 取 Token + 配置中转 URL。详见 ADR-0001。
 
 ### 2.3 验证安装
 
 ```bash
-# 测试连通性
-python -c "from modules.setup_wizard import test_jnb_connection; import os; print(test_jnb_connection(os.environ['TUSHARE_TOKEN']))"
+# 跑测试（预期 347 passed, 1 skipped）
+python -m pytest tests/ -q
 
-# 预期输出: True
+# 分析一只股票（默认 akshare 免 token，直接出战法信号）
+python -m modules.cli analyze 600487.SH
 ```
 
 ---
@@ -134,7 +139,8 @@ python -c "from modules.setup_wizard import test_jnb_connection; import os; prin
 
 | 变量名 | 必填 | 默认值 | 说明 |
 |--------|------|--------|------|
-| `DATA_MODE` | 否 | `websearch` | `jnb` = 真实行情模式，`websearch` = 纯对话模式 |
+| `DATA_MODE` | 否 | 未设置时 `websearch`；`.env.example` 出厂 `akshare` | `akshare`(默认免token) / `qcore`(数据湖) / `jnb`(Tushare休眠) / `websearch`(纯对话) |
+| `QCORE_DATA_DIR` | 是（qcore 模式） | 无 | 指向 量化交易 项目的 `data/` 目录 |
 | `TUSHARE_TOKEN` | 是（jnb 模式） | 无 | 56 位 Tushare Token |
 | `TUSHARE_API_URL` | 是（jnb 模式） | 无 | 中转 API 地址，如 `https://tt.xiaodefa.cn` |
 | `DB_PATH` | 否 | `data/stock_data.db` | 数据库路径，支持绝对/相对路径 |
@@ -143,11 +149,17 @@ python -c "from modules.setup_wizard import test_jnb_connection; import os; prin
 ### 3.2 模式切换
 
 ```bash
-# 切换到 websearch 模式（纯对话，不需要 Token）
+# akshare（默认，免 token）
+python -c "from modules.setup_wizard import write_env_file; write_env_file(mode='akshare')"
+
+# qcore（本机数据湖，需指定目录）
+python -c "from modules.setup_wizard import write_env_file; write_env_file(mode='qcore', extra={'QCORE_DATA_DIR': '/path/to/量化交易/data'})"
+
+# websearch（纯对话，不需要 Token）
 python -c "from modules.setup_wizard import write_env_file; write_env_file(mode='websearch')"
 
-# 切换回 JNB 模式（需 Token）
-python -c "from modules.setup_wizard import write_env_file; write_env_file(token='你的token', mode='jnb')"
+# jnb（Tushare 休眠保留，需 Token + 中转 URL）
+python -c "from modules.setup_wizard import write_env_file; write_env_file(token='你的token', mode='jnb', extra={'TUSHARE_API_URL': 'https://tt.xiaodefa.cn'})"
 ```
 
 ---
@@ -666,7 +678,7 @@ print(f"最新价: {data.close}, 涨跌: {data.pct_chg}%")
 ### 14.1 运行测试
 
 ```bash
-# 全部测试（预期：261 passed, 1 skipped）
+# 全部测试（预期：347 passed, 1 skipped）
 python -m pytest tests/ -v
 
 # 单文件测试

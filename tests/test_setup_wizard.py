@@ -130,3 +130,138 @@ class TestGetModeDisplayName:
 
     def test_unknown(self):
         assert get_mode_display_name("unknown") == "unknown"
+
+
+class TestCheckEnvExistsByMode:
+    """check_env_exists 的逐模式判定（v2.9 起不再硬性要求 Tushare token）。"""
+
+    @staticmethod
+    def _env(tmp_path):
+        """造一个存在的临时 .env（内容无关，配置值从 os.environ 读）。"""
+        p = tmp_path / ".env"
+        p.write_text("# test\n", encoding="utf-8")
+        return p
+
+    def test_akshare_configured(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("DATA_MODE", "akshare")
+        assert check_env_exists(env_path=self._env(tmp_path)) is True
+
+    def test_websearch_configured(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("DATA_MODE", "websearch")
+        assert check_env_exists(env_path=self._env(tmp_path)) is True
+
+    def test_qcore_without_dir_not_configured(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("DATA_MODE", "qcore")
+        monkeypatch.delenv("QCORE_DATA_DIR", raising=False)
+        assert check_env_exists(env_path=self._env(tmp_path)) is False
+
+    def test_qcore_with_dir_configured(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("DATA_MODE", "qcore")
+        monkeypatch.setenv("QCORE_DATA_DIR", str(tmp_path / "lake"))
+        assert check_env_exists(env_path=self._env(tmp_path)) is True
+
+    def test_jnb_without_token_not_configured(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("DATA_MODE", "jnb")
+        monkeypatch.delenv("TUSHARE_TOKEN", raising=False)
+        assert check_env_exists(env_path=self._env(tmp_path)) is False
+
+    def test_jnb_placeholder_token_not_configured(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("DATA_MODE", "jnb")
+        monkeypatch.setenv("TUSHARE_TOKEN", "你的56位token")
+        assert check_env_exists(env_path=self._env(tmp_path)) is False
+
+    def test_jnb_valid_token_configured(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("DATA_MODE", "jnb")
+        monkeypatch.setenv("TUSHARE_TOKEN", "a" * 40)
+        assert check_env_exists(env_path=self._env(tmp_path)) is True
+
+    def test_unknown_mode_not_configured(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("DATA_MODE", "nonsense_typo")
+        assert check_env_exists(env_path=self._env(tmp_path)) is False
+
+    def test_missing_env_file_not_configured(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("DATA_MODE", "akshare")
+        assert check_env_exists(env_path=tmp_path / "does_not_exist.env") is False
+
+
+class TestWriteEnvFileExtra:
+    """write_env_file 的 extra 参数（qcore 数据湖目录等）。"""
+
+    def test_extra_written_to_file(self, tmp_path):
+        env = tmp_path / ".env"
+        try:
+            write_env_file(mode=MODE_QCORE, extra={"QCORE_DATA_DIR": "/lake"},
+                           env_path=env)
+            content = env.read_text(encoding="utf-8")
+            assert "DATA_MODE=qcore" in content
+            assert "QCORE_DATA_DIR=/lake" in content
+        finally:
+            os.environ.pop("QCORE_DATA_DIR", None)
+
+    def test_extra_synced_to_environ(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("QCORE_DATA_DIR", raising=False)
+        env = tmp_path / ".env"
+        try:
+            write_env_file(mode=MODE_QCORE, extra={"QCORE_DATA_DIR": "/lake2"},
+                           env_path=env)
+            assert os.environ.get("QCORE_DATA_DIR") == "/lake2"
+        finally:
+            os.environ.pop("QCORE_DATA_DIR", None)
+
+    def test_canonical_keys_override_extra(self, tmp_path):
+        """extra 中夹带的 DATA_MODE 不得覆盖显式 mode 参数。"""
+        env = tmp_path / ".env"
+        write_env_file(mode=MODE_AKSHARE, extra={"DATA_MODE": "qcore"},
+                       env_path=env)
+        content = env.read_text(encoding="utf-8")
+        assert "DATA_MODE=akshare" in content
+        assert "DATA_MODE=qcore" not in content
+
+    def test_extra_updates_existing_key_in_place(self, tmp_path):
+        env = tmp_path / ".env"
+        env.write_text("DATA_MODE=qcore\nQCORE_DATA_DIR=/old\n", encoding="utf-8")
+        try:
+            write_env_file(mode=MODE_QCORE, extra={"QCORE_DATA_DIR": "/new"},
+                           env_path=env)
+            content = env.read_text(encoding="utf-8")
+            assert "QCORE_DATA_DIR=/new" in content
+            assert "/old" not in content
+            assert content.count("QCORE_DATA_DIR=") == 1
+        finally:
+            os.environ.pop("QCORE_DATA_DIR", None)
+
+
+class TestTushareOptionalImport:
+    """tushare 可选导入（ts=None）后的模式分发与友好报错。"""
+
+    def test_data_sync_jnb_without_tushare_raises(self, monkeypatch):
+        import modules.data_sync as ds
+        monkeypatch.setenv("DATA_MODE", "jnb")
+        monkeypatch.setenv("TUSHARE_TOKEN", "a" * 40)
+        monkeypatch.setattr(ds, "ts", None)
+        monkeypatch.setattr(ds, "TUSHARE_API_URL", "https://example.test")
+        with pytest.raises(ImportError):
+            ds.DataSyncer()
+
+    def test_data_sync_websearch_without_tushare_ok(self, monkeypatch):
+        """回归：websearch + 无 tushare 不应崩（只读命令如 status 依赖此路径）。"""
+        import modules.data_sync as ds
+        monkeypatch.setenv("DATA_MODE", "websearch")
+        monkeypatch.setattr(ds, "ts", None)
+        syncer = ds.DataSyncer()
+        assert syncer.pro is None
+
+    def test_data_sync_unknown_mode_without_tushare_ok(self, monkeypatch):
+        import modules.data_sync as ds
+        monkeypatch.setenv("DATA_MODE", "nonsense_typo")
+        monkeypatch.setattr(ds, "ts", None)
+        syncer = ds.DataSyncer()
+        assert syncer.pro is None
+
+    def test_tushare_client_jnb_without_tushare_raises(self, monkeypatch):
+        import modules.tushare_client as tc
+        monkeypatch.setenv("DATA_MODE", "jnb")
+        monkeypatch.setattr(tc, "ts", None)
+        monkeypatch.setattr(tc, "TUSHARE_API_URL", "https://example.test")
+        with pytest.raises(ImportError):
+            tc.TushareClient(token="a" * 40)

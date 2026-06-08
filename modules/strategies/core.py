@@ -121,70 +121,13 @@ def get_db_connection() -> sqlite3.Connection:
 
 def get_kline_data(ts_code: str, days: int = 120) -> List[Dict]:
     """
-    获取K线数据，并关联指标缓存与资金流数据
+    获取“富”K线数据（含指标缓存与资金流），按日期升序，最近 days 根。
+
+    取数逻辑已收敛到 modules.kline_data（单一窗口/排序/DB 不变式）。
+    本函数保留为 strategies 层的富 dict 适配入口，供 detect_* 战法检测消费。
     """
-    conn = get_db_connection()
-    cursor = conn.cursor()
-
-    # 联表查询：K线 + 指标缓存(Bollinger/RSI/DMI) + 资金流
-    # 取最近 days 根 K 线：内层按日期倒序取尾部，外层再正序还原时间线
-    cursor.execute("""
-        SELECT * FROM (
-            SELECT
-                k.ts_code, k.trade_date, k.open, k.high, k.low, k.close, k.vol, k.amount, k.pct_chg,
-                i.boll_upper, i.boll_mid, i.boll_lower, i.rsi6, i.adx, i.dmi_plus, i.dmi_minus,
-                m.buy_lg_amount, m.buy_elg_amount, m.sell_lg_amount, m.sell_elg_amount, m.net_mf
-            FROM daily_kline k
-            LEFT JOIN indicator_cache i ON k.ts_code = i.ts_code AND k.trade_date = i.trade_date
-            LEFT JOIN moneyflow m ON k.ts_code = m.ts_code AND k.trade_date = m.trade_date
-            WHERE k.ts_code = ?
-            ORDER BY k.trade_date DESC
-            LIMIT ?
-        )
-        ORDER BY trade_date ASC
-    """, (ts_code, days))
-
-    rows = cursor.fetchall()
-    conn.close()
-
-    data_list = []
-    for i, row in enumerate(rows):
-        prev_close = rows[i-1]['close'] if i > 0 else row['close']
-        prev_vol = rows[i-1]['vol'] if i > 0 else row['vol']
-
-        data_list.append({
-            'ts_code': row['ts_code'],
-            'trade_date': row['trade_date'],
-            'open': row['open'],
-            'high': row['high'],
-            'low': row['low'],
-            'close': row['close'],
-            'vol': row['vol'],
-            'amount': row['amount'],
-            'pct_chg': row['pct_chg'],
-            'prev_close': prev_close,
-            'prev_vol': prev_vol,
-            'is_rise': row['close'] > prev_close,
-            'is_beidou': row['vol'] >= prev_vol * 2,
-            'is_suoliang': row['vol'] <= prev_vol * 0.5,
-            'is_jiayin': row['close'] < row['open'] and row['close'] > prev_close,
-            'is_yinxian': row['close'] < prev_close,
-            'is_fangliang_yinxian': row['close'] < prev_close and row['vol'] > prev_vol * 1.5,
-
-            # MDC 扩展字段（LEFT JOIN 可能为 NULL，统一 fallback）
-            'boll_upper': row['boll_upper'] or 0,
-            'boll_mid': row['boll_mid'] or 0,
-            'boll_lower': row['boll_lower'] or 0,
-            'rsi6': row['rsi6'] or 0,
-            'adx': row['adx'] or 0,
-            'dmi_plus': row['dmi_plus'] or 0,
-            'dmi_minus': row['dmi_minus'] or 0,
-            'net_mf': row['net_mf'] or 0,
-            'large_inflow': (row['buy_lg_amount'] or 0) + (row['buy_elg_amount'] or 0),
-            'large_outflow': (row['sell_lg_amount'] or 0) + (row['sell_elg_amount'] or 0),
-        })
-
-    return data_list
+    from ..kline_data import fetch_rich_klines
+    return fetch_rich_klines(ts_code, days)
 
 def _dict_to_daily(klines: List[Dict]) -> List[Any]:
     """将 Dict K 线列表转换为 indicators.DailyData"""

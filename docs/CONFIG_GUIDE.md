@@ -9,19 +9,33 @@
 ### 数据模式
 
 ```ini
-DATA_MODE=jnb
+DATA_MODE=akshare
 ```
 
 | 值 | 说明 | 依赖 |
 |---|------|------|
-| `jnb` | 接入 Tushare 真实行情数据 | 必须配置 `TUSHARE_TOKEN` + `TUSHARE_API_URL` |
-| `websearch` | 纯 LLM 对话模式，不走行情接口 | 无需 Tushare 配置 |
+| `akshare` | **默认**，免 token 现拉前复权日线（新浪源） | `akshare`（已在 requirements） |
+| `qcore` | 本机 Parquet 数据湖，秒级、离线、约 7 年历史 | `QCORE_DATA_DIR` 指向数据湖目录 |
+| `jnb` | 接入 Tushare 真实行情（**已休眠保留**） | `pip install "tushare>=1.4.0"` + `TUSHARE_TOKEN` + `TUSHARE_API_URL` |
+| `websearch` | 纯 LLM 对话模式，不走行情接口 | 无 |
+
+> `akshare` 与 `qcore` 同源（缓存 vs 现拉），不拆独立「数据源」轴，见 [ADR-0002](adr/0002-flat-data-mode.md)。Tushare 退役背景见 [ADR-0001](adr/0001-retire-tushare-backend.md)。
 
 ---
 
-## 数据层配置（仅 jnb 模式）
+## 数据层配置
 
-### Tushare API
+### qcore 数据湖（DATA_MODE=qcore）
+
+```ini
+QCORE_DATA_DIR=C:\path\to\量化交易\data
+```
+
+| 变量 | 必填 | 说明 |
+|------|------|------|
+| `QCORE_DATA_DIR` | 是（qcore） | 指向 qcore/量化交易 项目的 `data/` 目录，内含 `daily_bar.parquet` / `stock_info.parquet` |
+
+### Tushare API（DATA_MODE=jnb，休眠保留）
 
 ```ini
 TUSHARE_TOKEN=你的56位token
@@ -104,7 +118,20 @@ DB_PATH=data/stock_data.db
 DATA_MODE=websearch
 ```
 
-### 股票分析模式（需 Tushare）
+### 股票分析模式（默认，免 token）
+
+```ini
+DATA_MODE=akshare
+```
+
+### 股票分析模式（本机数据湖，最快）
+
+```ini
+DATA_MODE=qcore
+QCORE_DATA_DIR=C:\Users\you\Desktop\量化交易\data
+```
+
+### 股票分析模式（Tushare，休眠保留）
 
 ```ini
 DATA_MODE=jnb
@@ -115,9 +142,7 @@ TUSHARE_API_URL=https://tt.xiaodefa.cn
 ### 完整模式（股票 + LLM + 知识库）
 
 ```ini
-DATA_MODE=jnb
-TUSHARE_TOKEN=ba0930...fa15
-TUSHARE_API_URL=https://tt.xiaodefa.cn
+DATA_MODE=akshare
 LLM_API_KEY=sk-cp-...ULLC
 LLM_BASE_URL=https://api.minimaxi.com/v1/chat/completions
 LLM_MODEL=MiniMax-M2.7

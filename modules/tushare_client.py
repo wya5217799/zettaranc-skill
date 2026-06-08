@@ -13,9 +13,13 @@ from typing import Optional, List
 try:
     import requests
     import pandas as pd
-    import tushare as ts
 except ImportError:
-    print("请先安装依赖: pip install requests pandas python-dotenv tushare")
+    print("请先安装依赖: pip install requests pandas python-dotenv")
+
+try:
+    import tushare as ts  # 可选后端（DATA_MODE=jnb）；免费模式无需安装
+except ImportError:
+    ts = None
 
 # dotenv 加载已移至 modules/__init__.py（包级别一次性加载，override=True）
 
@@ -47,6 +51,10 @@ class TushareClient:
 
         # 仅在 JNB 模式下强制检查 API 配置
         if data_mode == 'jnb':
+            if ts is None:
+                raise ImportError(
+                    "jnb 模式需要 Tushare：pip install \"zettaranc-skill[jnb]\"（或 pip install tushare）"
+                )
             if not self.token:
                 raise ValueError(
                     "JNB 模式下未设置 TUSHARE_TOKEN，请在 .env 中配置。\n"
@@ -65,11 +73,12 @@ class TushareClient:
         else:
             self._pro = None
 
-        try:
-            from tushare.stock import cons as ct
-            ct.verify_token_url = VERIFY_TOKEN_URL
-        except Exception:
-            pass
+        if ts is not None:
+            try:
+                from tushare.stock import cons as ct
+                ct.verify_token_url = VERIFY_TOKEN_URL
+            except Exception:
+                pass
 
         self.min_request_interval = 0.55
         self.last_request_time = 0

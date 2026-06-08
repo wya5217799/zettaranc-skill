@@ -313,13 +313,13 @@ def format_report(report: DiagnosisReport) -> str:
     lines.append("")
 
     if report.exit_signals:
-        lines.append("⚠️ 出货信号:")
+        lines.append("[!] 出货信号:")
         for s in report.exit_signals:
             lines.append(f"  [{s['strategy']}] {s['date']} {s['description']}")
         lines.append("")
 
     if report.buy_signals:
-        lines.append("✅ 可买信号:")
+        lines.append("[OK] 可买信号:")
         for s in report.buy_signals:
             lines.append(f"  [{s['strategy']}] {s['date']} {s['description']}")
         lines.append("")

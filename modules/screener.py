@@ -82,37 +82,15 @@ def get_all_stocks() -> List[Dict]:
 
 
 def get_recent_klines(ts_code: str, days: int = 60) -> List[Dict]:
-    """获取近期K线数据"""
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("""
-        SELECT ts_code, trade_date, open, high, low, close, vol, pct_chg
-        FROM daily_kline
-        WHERE ts_code = ?
-        ORDER BY trade_date DESC
-        LIMIT ?
-    """, (ts_code, days))
+    """
+    获取近期“富”K线数据（按日期升序，最近 days 根）。
 
-    rows = cursor.fetchall()
-    conn.close()
-
-    # 转换为升序
-    data_list = []
-    for i, row in enumerate(reversed(rows)):
-        prev_close = rows[len(rows)-i-2]['close'] if i < len(rows)-1 else row['close']
-        data_list.append({
-            'ts_code': row['ts_code'],
-            'trade_date': row['trade_date'],
-            'open': row['open'],
-            'high': row['high'],
-            'low': row['low'],
-            'close': row['close'],
-            'vol': row['vol'],
-            'pct_chg': row['pct_chg'],
-            'prev_close': prev_close,
-        })
-
-    return data_list
+    取数逻辑已收敛到 modules.kline_data：返回的富 dict 是评分函数所需精简字段的
+    超集，且自带 is_beidou/is_suoliang 等派生标志，因此 detect_* 战法检测可直接
+    复用同一份数据，无需再二次取数（历史上 thin→rich 的二次取数正是 KeyError 之源）。
+    """
+    from .kline_data import fetch_rich_klines
+    return fetch_rich_klines(ts_code, days)
 
 
 def calculate_ma(prices: List[float], period: int) -> float:
@@ -529,7 +507,7 @@ def _filter_stock(result: Tuple[str, List[Dict], StockScore], criteria: str) -> 
     判断单只股票是否满足选股条件
     在主进程串行执行（筛选逻辑快，不需要并行）
     """
-    ts_code, klines, score = result
+    _, klines, score = result
 
     # 基础选股策略
     if criteria == "b1" and score.b1_score >= 50:
@@ -542,39 +520,37 @@ def _filter_stock(result: Tuple[str, List[Dict], StockScore], criteria: str) -> 
         return True
 
     # 高级选股策略（基于战法检测）
-    # detect_* 需要含 is_beidou / is_suoliang 等预计算字段的"富"K线，
-    # 而 get_recent_klines 返回的是精简 dict —— 这里改用 strategies.core 的完整取数，
-    # 否则 detect_sb1 / detect_b2 等会抛 KeyError。
+    # detect_* 需要含 is_beidou / is_suoliang 等派生字段的"富"K线。get_recent_klines
+    # 现已统一返回富 dict（见 modules.kline_data），klines 本身即可直接喂给 detect_*，
+    # 无需再向 strategies.core 二次取数（旧 thin→rich 二次取数正是 KeyError 之源）。
     elif criteria in ("super_b1", "changan", "b2_breakout", "b3_consensus"):
-        from .strategies.core import get_kline_data as _get_rich_klines
-        rich = _get_rich_klines(ts_code, len(klines))
-        if not rich:
+        if not klines:
             return False
         if criteria == "super_b1":
             from .strategies import detect_sb1
-            for i in range(max(10, len(rich) - 5), len(rich)):
-                sig = detect_sb1(rich, i)
+            for i in range(max(10, len(klines) - 5), len(klines)):
+                sig = detect_sb1(klines, i)
                 if sig:
                     score.warnings.append(f"超级B1 J={sig.details.get('j', 0):.1f}")
                     return True
         elif criteria == "changan":
             from .strategies import detect_changan
-            for i in range(max(3, len(rich) - 5), len(rich)):
-                sig = detect_changan(rich, i)
+            for i in range(max(3, len(klines) - 5), len(klines)):
+                sig = detect_changan(klines, i)
                 if sig:
                     score.reasons.append("长安战法 胜率75%")
                     return True
         elif criteria == "b2_breakout":
             from .strategies import detect_b2
-            for i in range(max(15, len(rich) - 5), len(rich)):
-                sig = detect_b2(rich, i)
+            for i in range(max(15, len(klines) - 5), len(klines)):
+                sig = detect_b2(klines, i)
                 if sig:
                     score.reasons.append(f"B2突破 涨{sig.details.get('pct_chg', 0):.1f}%")
                     return True
         elif criteria == "b3_consensus":
             from .strategies import detect_b3
-            for i in range(max(20, len(rich) - 5), len(rich)):
-                sig = detect_b3(rich, i)
+            for i in range(max(20, len(klines) - 5), len(klines)):
+                sig = detect_b3(klines, i)
                 if sig:
                     score.reasons.append("B3分歧转一致")
                     return True
