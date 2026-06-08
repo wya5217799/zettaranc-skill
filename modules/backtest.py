@@ -615,6 +615,9 @@ def backtest_portfolio(
     cash = initial_capital
 
     for date in sorted_dates:
+        # 当日已止损/止盈出场的股票，禁止同日再买入（避免同根 K 既卖又买的 churn）
+        exited_today: set[str] = set()
+
         # 1. 检查每只股票持仓的止损/止盈
         for ts_code, data in stock_data.items():
             pos = data['position']
@@ -629,8 +632,6 @@ def backtest_portfolio(
             day_high = kline['high']
             day_low = kline['low']
             pos.update_price(price)
-
-            exited = False
 
             # 止损
             if day_low <= pos.entry_price * (1 - stop_loss_pct):
@@ -650,7 +651,7 @@ def backtest_portfolio(
                 )
                 result.trades.append(trade)
                 data['position'] = None
-                exited = True
+                exited_today.add(ts_code)
 
             # 止盈
             elif day_high >= pos.entry_price * (1 + take_profit_pct):
@@ -670,7 +671,7 @@ def backtest_portfolio(
                 )
                 result.trades.append(trade)
                 data['position'] = None
-                exited = True
+                exited_today.add(ts_code)
 
         # 2. 处理新信号（买入/卖出）
         for ts_code, data in stock_data.items():
@@ -689,8 +690,8 @@ def backtest_portfolio(
             day_signals.sort(key=lambda s: s.priority.value if hasattr(s.priority, 'value') else 3)
             top_signal = day_signals[0]
 
-            # 买入
-            if top_signal.action == 'BUY' and pos is None:
+            # 买入（当日已止损/止盈出场的股票跳过，禁止同日再入场）
+            if top_signal.action == 'BUY' and pos is None and ts_code not in exited_today:
                 # 计算该股票允许的最大投入金额
                 total_value = cash + sum(
                     (p.current_value if p else 0)
