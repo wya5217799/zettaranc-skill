@@ -372,33 +372,45 @@ class TradeParser:
 
     def confirm_and_fill(self, data: Dict, user_response: str) -> Dict:
         """
-        根据用户的确认/修正信息更新数据
+        根据用户的确认/修正信息更新数据。
+
+        - 确认（且无否定词）→ 原样返回。
+        - 否定或夹带修正 → 重新解析用户回复，仅把「确实提取到」的字段覆盖进
+          原数据；排除解析器填的默认值（如未提到日期时默认的 trade_date），
+          返回新副本（不修改入参）。
 
         Args:
-            data: 当前数据
-            user_response: 用户回复
+            data: 当前已解析的数据
+            user_response: 用户回复（如「不对，单价 12.5 元」）
 
         Returns:
-            更新后的数据
+            更新后的数据（新 dict）
         """
-        # 确认词
         confirm_words = ['对', '是的', '正确', '嗯', '好', 'ok', 'confirm']
-        # 否定词
-        deny_words = ['不', '不是', '错', 'no', '不对']
+        deny_words = ['不', '不是', '错', '不对', 'no']
 
-        response = user_response.strip().lower()
+        response_lower = user_response.strip().lower()
+        has_deny = any(w in response_lower for w in deny_words)
+        has_confirm = any(w in response_lower for w in confirm_words)
 
-        # 如果用户确认
-        if any(w in response for w in confirm_words):
+        # 先判否定：避免「不对」因含「对」被误判为确认
+        if has_confirm and not has_deny:
             return data
 
-        # 如果用户否定，尝试从回复中提取修正值
-        for key in data:
-            if key in user_response:
-                # 简单处理：假设用户输入了修正值
-                pass
+        # 否定或夹带修正：重新解析回复，仅覆盖真正提取到的字段
+        parsed = self.parse(user_response)
+        if not parsed or not parsed.data:
+            return data
 
-        return data
+        corrected = dict(data)  # 副本，遵循不可变更新
+        defaulted = set(parsed.missing_fields or [])
+        for key, value in parsed.data.items():
+            if key in defaulted:
+                continue  # 解析器填的默认值，用户并未真正指定
+            if value in (None, "", []):
+                continue
+            corrected[key] = value
+        return corrected
 
     def generate_confirm_message(self, data: Dict) -> str:
         """生成确认消息"""
