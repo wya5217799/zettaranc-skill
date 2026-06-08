@@ -145,7 +145,7 @@ python -m modules.data_sync sync --ts_code 600487.SH --days 120
 ### 4. 验证
 
 ```bash
-# 运行测试（347 passed, 1 skipped）
+# 运行测试（353 passed, 1 skipped）
 python -m pytest tests/ -v
 
 # 分析一只股票
@@ -373,7 +373,7 @@ zettaranc-skill/
 │   ├── setup_wizard.py         # 初始化配置向导
 │   └── zettaranc_voice.py      # 语料库 / LLM 提示词模板
 ├── knowledge/                  # 知识文档（14篇交易体系）
-├── tests/                      # 单元测试（pytest，347 用例）
+├── tests/                      # 单元测试（pytest，354 用例）
 └── scripts/                    # 工具脚本
 ```
 

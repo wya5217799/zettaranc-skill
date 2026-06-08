@@ -69,7 +69,7 @@ Python 数据层（modules/）              LLM 角色层（SKILL.md）
 | 外部数据 | `akshare`（默认，免 token 现拉）、`pyarrow`（qcore 数据湖）、`pandas`、`requests`；`tushare` 为可选休眠后端 |
 | 环境配置 | `python-dotenv`（`.env` 文件） |
 | 数据库 | SQLite（本地文件，8 张表，26 万+ 条真实数据） |
-| 测试框架 | `pytest`（347 用例） |
+| 测试框架 | `pytest`（354 用例） |
 | 视频下载 | `yt-dlp`（语料采集，可选） |
 | 语音转写 | `faster-whisper`（语料采集，可选） |
 | 文档格式 | Markdown（全部文档与语料） |
@@ -161,7 +161,7 @@ zettaranc-skill/
 │   ├── advanced-patterns.md    # 长安战法、平行重炮、对称 VA
 │   ├── data_dictionary.md      # 输入数据字典（DailyBar/MoneyFlow/Financial）
 │   └── signal_dictionary.md    # 输出信号字典
-├── tests/                      # 单元测试（pytest，347 用例）
+├── tests/                      # 单元测试（pytest，354 用例）
 │   ├── conftest.py             # 测试基础设施：临时数据库 fixture、K线工厂函数
 │   ├── test_database.py        # 数据库初始化、连接、事务、表增删、幂等性
 │   ├── test_indicators.py      # 56+ 指标计算测试
@@ -233,7 +233,7 @@ pip install -e .
 ### 运行测试
 
 ```bash
-# 全部测试（预期：347 passed, 1 skipped）
+# 全部测试（预期：353 passed, 1 skipped）
 python -m pytest tests/ -v
 
 # 单文件测试
@@ -350,7 +350,7 @@ python scripts/quality_check.py SKILL.md
 
 ```bash
 $ python -m pytest tests/ -v
-# 预期：347 passed, 1 skipped
+# 预期：353 passed, 1 skipped
 ```
 
 ---

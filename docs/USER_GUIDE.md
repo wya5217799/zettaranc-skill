@@ -78,7 +78,7 @@ SKILL.md（LLM 角色层：Z 哥视角点评、多轮问诊、表达 DNA）
 | 数据库 | SQLite（本地文件，8 张表 + 索引） |
 | 数据处理 | pandas |
 | 环境配置 | python-dotenv（.env 文件） |
-| 测试框架 | pytest（347 用例） |
+| 测试框架 | pytest（354 用例） |
 | 版本控制 | Git |
 
 ---
@@ -124,7 +124,7 @@ DB_PATH=data/stock_data.db
 ### 2.3 验证安装
 
 ```bash
-# 跑测试（预期 347 passed, 1 skipped）
+# 跑测试（预期 353 passed, 1 skipped）
 python -m pytest tests/ -q
 
 # 分析一只股票（默认 akshare 免 token，直接出战法信号）
@@ -678,7 +678,7 @@ print(f"最新价: {data.close}, 涨跌: {data.pct_chg}%")
 ### 14.1 运行测试
 
 ```bash
-# 全部测试（预期：347 passed, 1 skipped）
+# 全部测试（预期：353 passed, 1 skipped）
 python -m pytest tests/ -v
 
 # 单文件测试
