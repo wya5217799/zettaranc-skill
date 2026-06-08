@@ -75,6 +75,60 @@ def _calculate_20day_gain(klines: List[DailyData]) -> float:
     return (klines[-1].close / klines[-20].close - 1) * 100
 
 
+def _score_sprint_wave(gain_pct: float, limit_up_count: int, gain_20day: float, red_ratio: float) -> int:
+    """冲刺波评分：涨幅 > 100% 且频繁涨停（≥3次）"""
+    score = 0
+    if gain_pct > 100:
+        score += 40
+    if limit_up_count >= 3:
+        score += 30
+    if gain_20day > 30:
+        score += 20
+    if red_ratio > 0.7:
+        score += 10
+    return score
+
+
+def _score_pull_wave(gain_pct: float, gain_20day: float, limit_up_count: int, avg_daily_gain: float) -> int:
+    """拉升波评分：涨幅 > 50% 或 20 日涨幅 > 30%，涨停 ≥2 次"""
+    score = 0
+    if gain_pct > 50:
+        score += 35
+    elif gain_pct > 40:
+        score += 20
+    if gain_20day > 30:
+        score += 25
+    elif gain_20day > 20:
+        score += 15
+    if limit_up_count >= 2:
+        score += 25
+    elif limit_up_count >= 1:
+        score += 10
+    if avg_daily_gain > 1.5:
+        score += 15
+    return score
+
+
+def _score_build_wave(gain_pct: float, limit_up_count: int, red_ratio: float, avg_daily_gain: float) -> int:
+    """建仓波评分：25% ≤ 涨幅 ≤ 50%，涨停 ≤1 次，阳线占比 > 60%，日均涨幅温和"""
+    score = 0
+    if 25 <= gain_pct <= 50:
+        score += 35
+    elif 15 <= gain_pct < 25:
+        score += 20
+    elif 50 < gain_pct <= 60:
+        score += 15
+    if limit_up_count <= 1:
+        score += 25
+    if red_ratio > 0.6:
+        score += 20
+    elif red_ratio > 0.5:
+        score += 10
+    if 0.3 <= avg_daily_gain <= 2.0:
+        score += 20
+    return score
+
+
 def detect_three_waves(klines: List[DailyData]) -> Dict:
     """
     识别当前处于三波理论的哪个阶段
@@ -141,17 +195,7 @@ def detect_three_waves(klines: List[DailyData]) -> Dict:
     result['stats'] = stats
 
     # ========== 冲刺波判断 ==========
-    # 涨幅 > 100% 且频繁涨停（≥3次）
-    sprint_score = 0
-    if gain_pct > 100:
-        sprint_score += 40
-    if limit_up_count >= 3:
-        sprint_score += 30
-    if gain_20day > 30:
-        sprint_score += 20
-    if red_ratio > 0.7:
-        sprint_score += 10
-
+    sprint_score = _score_sprint_wave(gain_pct, limit_up_count, gain_20day, red_ratio)
     if sprint_score >= 60:
         result['wave'] = '冲刺波'
         result['confidence'] = round(min(sprint_score / 100, 1.0), 2)
@@ -159,23 +203,7 @@ def detect_three_waves(klines: List[DailyData]) -> Dict:
         return result
 
     # ========== 拉升波判断 ==========
-    # 涨幅 > 50% 或 20 日涨幅 > 30%，涨停 ≥2 次
-    pull_score = 0
-    if gain_pct > 50:
-        pull_score += 35
-    elif gain_pct > 40:
-        pull_score += 20
-    if gain_20day > 30:
-        pull_score += 25
-    elif gain_20day > 20:
-        pull_score += 15
-    if limit_up_count >= 2:
-        pull_score += 25
-    elif limit_up_count >= 1:
-        pull_score += 10
-    if avg_daily_gain > 1.5:
-        pull_score += 15
-
+    pull_score = _score_pull_wave(gain_pct, gain_20day, limit_up_count, avg_daily_gain)
     if pull_score >= 50:
         result['wave'] = '拉升波'
         result['confidence'] = round(min(pull_score / 100, 1.0), 2)
@@ -183,23 +211,7 @@ def detect_three_waves(klines: List[DailyData]) -> Dict:
         return result
 
     # ========== 建仓波判断 ==========
-    # 25% ≤ 涨幅 ≤ 50%，涨停 ≤1 次，阳线占比 > 60%，日均涨幅温和
-    build_score = 0
-    if 25 <= gain_pct <= 50:
-        build_score += 35
-    elif 15 <= gain_pct < 25:
-        build_score += 20
-    elif 50 < gain_pct <= 60:
-        build_score += 15
-    if limit_up_count <= 1:
-        build_score += 25
-    if red_ratio > 0.6:
-        build_score += 20
-    elif red_ratio > 0.5:
-        build_score += 10
-    if 0.3 <= avg_daily_gain <= 2.0:
-        build_score += 20
-
+    build_score = _score_build_wave(gain_pct, limit_up_count, red_ratio, avg_daily_gain)
     if build_score >= 50:
         result['wave'] = '建仓波'
         result['confidence'] = round(min(build_score / 100, 1.0), 2)
