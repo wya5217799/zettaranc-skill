@@ -8,9 +8,10 @@
 
 import argparse
 
-from modules.backtest._models import BacktestResult, PortfolioBacktestResult
-from modules.backtest._single import backtest_strategy
-from modules.backtest._multi import backtest_multi_strategy
+from modules.backtest import (
+    BacktestResult, PortfolioBacktestResult,
+    backtest_strategy, backtest_multi_strategy,
+)
 
 parser = argparse.ArgumentParser(description='策略回测')
 subparsers = parser.add_subparsers(dest='command')
