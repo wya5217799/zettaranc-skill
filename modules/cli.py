@@ -16,23 +16,9 @@ import os
 # dotenv 加载已移至 modules/__init__.py（包级别一次性加载）
 
 
-def cmd_analyze(args):
-    """分析单只股票"""
-    from modules.indicators import analyze_stock
-    from modules.indicators.data_layer import get_kline_data, DailyData
-    from modules.strategies import detect_all_strategies
-    from modules.portfolio_diagnosis import diagnose_stock, format_report
-
-    ts_code = args.ts_code
-    days = args.days
-
-    print(f"\n{'='*60}")
-    print(f"股票分析: {ts_code}")
-    print(f"{'='*60}")
-
-    # 1. 指标分析
+def _print_indicators(result) -> None:
+    """打印技术指标区块（无分支）"""
     print("\n【技术指标】")
-    result = analyze_stock(ts_code, days=days)
     print(f"  日期: {result.trade_date}")
     print(f"  KDJ:  K={result.k:.2f}  D={result.d:.2f}  J={result.j:.2f}")
     print(f"  MACD: DIF={result.dif:.4f}  DEA={result.dea:.4f}  柱={result.macd_hist:.4f}")
@@ -41,10 +27,14 @@ def cmd_analyze(args):
     print(f"  RSI:  {result.rsi6:.2f}/{result.rsi12:.2f}/{result.rsi24:.2f}")
     print(f"  砖型图: {result.brick_trend}({result.brick_count}块)  值={result.brick_value:.2f}")
 
-    # 2. P2 指标：三波理论 + 麒麟会（需要原始 K 线数据）
+
+def _print_main_stage(ts_code: str, days: int) -> None:
+    """打印主力阶段区块（三波理论 + 麒麟会）"""
+    from modules.indicators import detect_three_waves, detect_kirin_stage
+    from modules.indicators.data_layer import get_kline_data, DailyData
+
     print("\n【主力阶段】")
     try:
-        from modules.indicators import detect_three_waves, detect_kirin_stage
         klines = get_kline_data(ts_code, days=days)
         if not klines:
             print("  无 K 线数据，跳过主力阶段分析")
@@ -82,9 +72,10 @@ def cmd_analyze(args):
     except Exception as e:
         print(f"  检测失败: {e}")
 
-    # 3. 策略信号
+
+def _print_signals(signals) -> None:
+    """打印战法信号区块"""
     print("\n【战法信号】")
-    signals = detect_all_strategies(ts_code, days=days)
     if not signals:
         print("  无信号")
     else:
@@ -104,6 +95,31 @@ def cmd_analyze(args):
             print(f"  [观察] ({len(observe)}个):")
             for s in observe[:3]:
                 print(f"     {s.trade_date} {s.strategy.value}: {s.description}")
+
+
+def cmd_analyze(args):
+    """分析单只股票"""
+    from modules.indicators import analyze_stock
+    from modules.strategies import detect_all_strategies
+    from modules.portfolio_diagnosis import diagnose_stock, format_report
+
+    ts_code = args.ts_code
+    days = args.days
+
+    print(f"\n{'='*60}")
+    print(f"股票分析: {ts_code}")
+    print(f"{'='*60}")
+
+    # 1. 指标分析
+    result = analyze_stock(ts_code, days=days)
+    _print_indicators(result)
+
+    # 2. P2 指标：三波理论 + 麒麟会（需要原始 K 线数据）
+    _print_main_stage(ts_code, days)
+
+    # 3. 策略信号
+    signals = detect_all_strategies(ts_code, days=days)
+    _print_signals(signals)
 
     # 4. 诊断
     print("\n【持仓诊断】")
