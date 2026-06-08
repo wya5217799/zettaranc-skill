@@ -2,17 +2,15 @@
 技术指标数据层模块
 """
 
-import os
-import sqlite3
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Optional, Tuple
 
 try:
     from .core import (
-        DB_PATH, get_db_connection,
+        get_db_connection,
         DailyData, TradeSignal, IndicatorResult,
-        calculate_ma, calculate_ema, calculate_kdj, calculate_bbi,
+        calculate_ma, calculate_kdj, calculate_bbi,
         calculate_rsi_multi, calculate_wr_multi, calculate_bollinger,
-        calculate_vol_ratio, calculate_macd, get_data_mode,
+        calculate_vol_ratio, calculate_macd,
     )
     from .price_patterns import (
         calculate_zg_white, calculate_dg_yellow, detect_double_line_cross,
@@ -145,7 +143,6 @@ def _save_indicator_cache(result: IndicatorResult, klines: List[DailyData]) -> b
         return False
 
     today = klines[-1]
-    yesterday = klines[-2] if len(klines) > 1 else None
 
     try:
         conn = get_db_connection()
@@ -561,7 +558,7 @@ def format_result(result: IndicatorResult) -> str:
         f"股票: {result.ts_code}  日期: {result.trade_date}",
         f"{'='*60}",
         f"[KDJ]  K={result.k:.2f}  D={result.d:.2f}  J={result.j:.2f}",
-        f"",
+        "",
         f"[MACD] DIF={result.dif:.4f}  DEA={result.dea:.4f}  柱={result.macd_hist:.4f}",
     ]
 
@@ -609,7 +606,7 @@ def format_result(result: IndicatorResult) -> str:
     lines.append(f"[双线战法] 白线={result.zg_white:.2f}  大哥线={result.dg_yellow:.2f}  Gold:{result.is_gold_cross}  Dead:{result.is_dead_cross}")
     lines.append(f"[单针下20] RSL_S={result.rsl_short:.2f}  RSL_L={result.rsl_long:.2f}  Signal:{result.is_needle_20}")
     if result.is_needle_30:
-        lines.append(f"[单针下30] *** 信号触发 (红>85, 白<30)")
+        lines.append("[单针下30] *** 信号触发 (红>85, 白<30)")
     lines.append("")
 
     # B1/B2 战法检测
@@ -664,7 +661,7 @@ def format_result(result: IndicatorResult) -> str:
 
     # 娜娜图/黄金碗/呼吸结构/SB1/B3
     if result.is_nana:
-        lines.append(f"[娜娜图] *** 完美建仓信号")
+        lines.append("[娜娜图] *** 完美建仓信号")
         lines.append("")
     if result.is_in_bowl:
         lines.append(f"[黄金碗] *** 价格在碗内  上沿={result.bowl_upper:.2f}  下沿={result.bowl_lower:.2f}")
@@ -675,10 +672,10 @@ def format_result(result: IndicatorResult) -> str:
         lines.append(f"[呼吸结构] {phase_label}{n_type}")
         lines.append("")
     if result.is_sb1:
-        lines.append(f"[SB1假摔] *** 假摔信号触发")
+        lines.append("[SB1假摔] *** 假摔信号触发")
         lines.append("")
     if result.is_sb1_detailed:
-        lines.append(f"[超级B1] *** 超级B1信号触发")
+        lines.append("[超级B1] *** 超级B1信号触发")
         lines.append("")
     if result.is_double_gun:
         lines.append(f"[双枪战法] *** 第一枪量比{result.double_gun_vol1:.1f}x 第二枪{result.double_gun_vol2:.1f}x 间隔{result.double_gun_gap_days}天")
@@ -687,7 +684,7 @@ def format_result(result: IndicatorResult) -> str:
         lines.append(f"[异动选股] *** {result.yidong_type} 量比{result.yidong_vol_ratio:.1f}x 60日线={'上方' if result.yidong_above_60d else '下方'}")
         lines.append("")
     if result.is_b3:
-        lines.append(f"[B3买点] *** B3信号触发")
+        lines.append("[B3买点] *** B3信号触发")
         lines.append("")
 
     # 四块砖交易体系
@@ -702,7 +699,7 @@ def format_result(result: IndicatorResult) -> str:
         for item_name, passed in result.sell_items.items():
             lines.append(f"  {item_name}: {'[Y]' if passed else '[N]'}")
     else:
-        lines.append(f"  (数据不足)")
+        lines.append("  (数据不足)")
     lines.append("")
     lines.append(f"[交易信号] {result.signal.value}")
     lines.append(f"{'='*60}")

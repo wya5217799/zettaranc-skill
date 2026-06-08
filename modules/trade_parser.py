@@ -4,11 +4,10 @@
 """
 
 import re
-from datetime import datetime, date
-from typing import Dict, Optional, Tuple, Any
+from datetime import datetime
+from typing import Dict, Optional, Any
 from dataclasses import dataclass
 
-from .database import get_trade_record_by_id, update_trade_record
 
 
 @dataclass
@@ -394,7 +393,7 @@ class TradeParser:
             return data
 
         # 如果用户否定，尝试从回复中提取修正值
-        for key in data.keys():
+        for key in data:
             if key in user_response:
                 # 简单处理：假设用户输入了修正值
                 pass
@@ -430,8 +429,8 @@ def format_trade_for_review(data: Dict) -> str:
     ts_code = data.get('ts_code', '')
 
     lines = [
-        f"📋 交易记录确认",
-        f"",
+        "📋 交易记录确认",
+        "",
         f"📅 日期: {data.get('trade_date', '未设置')}",
         f"📈 股票: {name} ({ts_code})",
         f"📊 方向: {action_text}",

@@ -12,7 +12,6 @@ Z哥量化工具 CLI
 import argparse
 import sys
 import os
-from typing import List, Optional
 
 # dotenv 加载已移至 modules/__init__.py（包级别一次性加载）
 
@@ -21,7 +20,7 @@ def cmd_analyze(args):
     """分析单只股票"""
     from modules.indicators import analyze_stock
     from modules.indicators.data_layer import get_kline_data, DailyData
-    from modules.strategies import detect_all_strategies, StrategyType
+    from modules.strategies import detect_all_strategies
     from modules.portfolio_diagnosis import diagnose_stock, format_report
 
     ts_code = args.ts_code
@@ -133,7 +132,7 @@ def cmd_screen(args):
     scan = getattr(args, 'scan', 500)
 
     print(f"\n{'='*60}")
-    print(f"股票筛选")
+    print("股票筛选")
     print(f"{'='*60}")
     print(f"\n筛选条件: {strategy} (criteria={criteria})  扫描上限: {scan} 只")
 

@@ -206,8 +206,6 @@ def detect_kirin_stage(klines: List[DailyData]) -> Dict:
     if len(klines) < 60:
         return result
 
-    today = klines[-1]
-
     # ========== 计算辅助指标 ==========
     position = _calculate_position_ratio(klines)
     red_green = _calculate_red_green_ratio(klines, period=20)

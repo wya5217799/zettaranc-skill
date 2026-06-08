@@ -1,5 +1,5 @@
 from typing import List, Dict, Optional
-from .core import StrategyType, StrategySignal, Priority, Action, _klines_dict_to_daily
+from .core import StrategyType, StrategySignal, Priority, _klines_dict_to_daily
 from ..indicators import detect_four_brick_system
 
 def detect_s1(klines: List[Dict], index: int,
@@ -76,7 +76,7 @@ def detect_s1(klines: List[Dict], index: int,
         trade_date=today['trade_date'],
         strategy=StrategyType.S1,
         confidence=round(min(max(confidence, 0.1), 0.98), 2),
-        description=f"S1逃顶(丑陋大绿帽) " + ", ".join(mdc_details),
+        description="S1逃顶(丑陋大绿帽) " + ", ".join(mdc_details),
         details={
             'up_pct': round(up_pct * 100, 2),
             'close_position': round(close_position, 2),
@@ -213,7 +213,7 @@ def detect_s3(klines: List[Dict], index: int) -> Optional[StrategySignal]:
         trade_date=today['trade_date'],
         strategy=StrategyType.S3,
         confidence=0.7,
-        description=f"S3最后逃生 反弹至S1下沿 量能不足",
+        description="S3最后逃生 反弹至S1下沿 量能不足",
         details={
             's1_date': klines[s1_index]['trade_date'],
             's1_high': s1_high,

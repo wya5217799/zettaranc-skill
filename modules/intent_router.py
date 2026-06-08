@@ -5,14 +5,13 @@
 规则匹配优先（< 1ms，零 token 消耗），LLM 轻量分类兜底。
 集成知识库检索，组装对应角色框架。
 """
-import os
 import re
 import yaml
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Optional, Literal
 
-from .knowledge_retriever import KnowledgeRetriever, KnowledgeCard, format_knowledge_cards
+from .knowledge_retriever import KnowledgeRetriever, format_knowledge_cards
 
 
 @dataclass

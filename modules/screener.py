@@ -7,7 +7,7 @@ import sqlite3
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime
 import os
 
 # 数据库路径默认值（实际连接时动态读取 DB_PATH 环境变量，见 get_db_connection）
@@ -345,7 +345,6 @@ def score_risk(klines: List[Dict]) -> Tuple[float, List[str]]:
 
     today = klines[-1]
     bbi = calculate_bbi(klines)
-    closes = [k['close'] for k in klines]
 
     score = 100  # 初始100分，越高越安全
     warnings = []
@@ -392,8 +391,6 @@ def analyze_stock(ts_code: str, klines: Optional[List[Dict]] = None) -> StockSco
 
     if not klines:
         return StockScore(ts_code=ts_code)
-
-    today = klines[-1]
 
     # 获取股票名称
     conn = get_db_connection()
@@ -776,11 +773,11 @@ def daily_workflow() -> Dict[str, Any]:
     b1_stocks = screen_stocks("b1")[:5]
     perfect_stocks = screen_stocks("perfect")[:5]
 
-    print(f"B1买点机会 (TOP 5):")
+    print("B1买点机会 (TOP 5):")
     for i, s in enumerate(b1_stocks[:5], 1):
         print(f"  {i}. {s.ts_code} {s.name} 评分:{s.score:.0f}")
 
-    print(f"\n完美图形 (TOP 5):")
+    print("\n完美图形 (TOP 5):")
     for i, s in enumerate(perfect_stocks[:5], 1):
         print(f"  {i}. {s.ts_code} {s.name} 评分:{s.score:.0f}")
 

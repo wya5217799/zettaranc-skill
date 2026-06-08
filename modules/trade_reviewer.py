@@ -3,11 +3,11 @@
 只负责数据准备，不生成点评（点评由 LLM 用 Z哥角色输出）
 """
 
-from typing import Dict, List, Optional, Any, Tuple
-from dataclasses import dataclass, asdict
+from typing import Dict, List, Optional, Tuple
+from dataclasses import dataclass
 from datetime import datetime
 
-from .database import get_connection, save_trade_record, get_trade_record_by_id, get_trade_records
+from .database import save_trade_record, get_trade_records
 from .indicators import analyze_stock
 from .trade_parser import TradeParser, ParseResult
 from .zettaranc_voice import TRADE_REVIEW_PROMPT, JARGON_DICT
@@ -49,7 +49,7 @@ class ReviewContext:
 
     def to_llm_prompt(self) -> str:
         """转换为给 LLM 的提示词"""
-        parts = [f"【交易记录】"]
+        parts = ["【交易记录】"]
 
         # 基础信息
         action_text = "买入" if self.action == "BUY" else "卖出"

@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
-from typing import List, Dict, Optional
-from .core import StrategyType, StrategySignal, Priority, Action
+from typing import List
+from .core import StrategyType, StrategySignal, Priority
 
 def detect_b1_vec(df: pd.DataFrame) -> pd.Series:
     """
@@ -143,7 +143,7 @@ def generate_signals_from_df(df: pd.DataFrame) -> List[StrategySignal]:
             elif st_type == StrategyType.B2:
                 sig.description = f"B2确认 涨{row['pct_chg']:.2f}%"
             elif st_type == StrategyType.S1:
-                sig.description = f"S1逃顶 放量阴线"
+                sig.description = "S1逃顶 放量阴线"
                 
             signals.append(sig)
             

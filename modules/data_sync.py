@@ -553,7 +553,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 
                 records = []
                 for row in df.itertuples(index=False):
                     row_dict = row._asdict()
-                    values = [row_dict.get(field_map.get(k, k), 0) for k in field_map.keys()]
+                    values = [row_dict.get(field_map.get(k, k), 0) for k in field_map]
                     records.append(values)
                     
                 cursor.executemany("""

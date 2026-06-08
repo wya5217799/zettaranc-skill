@@ -20,7 +20,7 @@ from typing import List, Dict, Any, Optional, Tuple
 # except ImportError:
 #     from strategies import detect_all_strategies, get_kline_data, Priority
 
-from modules.strategies import detect_all_strategies, get_kline_data, Priority
+from modules.strategies import detect_all_strategies, get_kline_data
 
 
 @dataclass
@@ -290,7 +290,7 @@ class PortfolioBacktestResult:
         """格式化回测摘要"""
         lines = [
             f"{'='*60}",
-            f"组合回测结果",
+            "组合回测结果",
             f"{'='*60}",
             f"初始资金:   ¥{self.initial_capital:,.0f}",
             f"最终资产:   ¥{self.final_value:,.0f}",

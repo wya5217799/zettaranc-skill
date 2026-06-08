@@ -10,7 +10,6 @@
 5. 止损/止盈位提示
 """
 
-import os
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass, field
 
@@ -22,7 +21,7 @@ from .indicators import (
 )
 from .strategies import (
     detect_all_strategies, analyze_kirin_phase,
-    StrategyType, StrategySignal
+    StrategyType
 )
 
 
@@ -98,7 +97,6 @@ def diagnose_stock(ts_code: str, days: int = 100) -> DiagnosisReport:
 
     # 战法信号（最近30天内）
     all_signals = detect_all_strategies(ts_code, days=days)
-    recent_signals = [s for s in all_signals if s.trade_date >= indicators.trade_date[:6] + "01" or True]
 
     # 分离买卖信号
     buy_signals = []

@@ -60,7 +60,7 @@ def detect_changan(klines: List[Dict], index: int,
         trade_date=day3['trade_date'],
         strategy=StrategyType.CHANGAN,
         confidence=round(min(confidence, 0.98), 2),
-        description=f"长安战法确认(胜率75%) " + ", ".join(mdc_details),
+        description="长安战法确认(胜率75%) " + ", ".join(mdc_details),
         details={
             'j1': j1, 'j2': j2,
             'day2_pct': day2['pct_chg'],

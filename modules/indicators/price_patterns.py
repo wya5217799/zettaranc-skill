@@ -5,10 +5,8 @@
 from typing import List, Dict, Any, Optional, Tuple
 
 from .core import (
-    DailyData, TradeSignal, IndicatorResult,
-    calculate_ma, calculate_ema, calculate_sma_td, calculate_sma_series, calculate_slope,
-    calculate_kdj, calculate_bbi, calculate_rsi_multi, calculate_wr_multi,
-    calculate_bollinger, calculate_vol_ratio,
+    DailyData, calculate_ma, calculate_ema, calculate_sma_series, calculate_slope,
+    calculate_kdj,
 )
 
 def detect_divergence(klines: List[DailyData], dif_list: List[float]) -> Dict:
@@ -196,8 +194,6 @@ def detect_double_line_cross(klines: List[DailyData]) -> Tuple[bool, bool]:
     # 需要足够数据计算大哥线
     if len(klines) < 115:
         return False, False
-
-    closes = [k.close for k in klines]
 
     # 计算历史白线和大哥线
     white_values = []
@@ -1055,9 +1051,6 @@ def check_two_30_rule(klines: List[DailyData]) -> Dict:
     today_close = klines[-1].close
     rally_pct = (today_close - min_close) / min_close * 100 if min_close > 0 else 0
     # 估算累计换手率（简化：累加每日vol/流通股本，用vol近似）
-    total_vol = sum(k.vol for k in klines[-lookback:])
-    avg_cap = sum(k.vol for k in klines[-lookback:]) / lookback  # 简化
-    turnover_est = total_vol / (avg_cap * lookback) * 100 if avg_cap > 0 else 0
     # 用更简单的方式：涨幅在25%-35%之间算通过
     result['b1_rally_pct'] = round(rally_pct, 2)
     result['b1_pass_30'] = 25 <= rally_pct <= 40
@@ -1163,7 +1156,6 @@ def detect_sb1(klines: List[DailyData]) -> Dict:
     if len(klines) < 6:
         return result
     n = len(klines)
-    today = klines[-1]
     yesterday = klines[-2]
     # 前天是假摔日
     if len(klines) >= 3:
@@ -1188,7 +1180,6 @@ def detect_b3(klines: List[DailyData]) -> Dict:
         return result
     n = len(klines)
     today = klines[-1]
-    prev = klines[-2]
     # 往前找B2(大涨>=4%的阳线)
     b2_idx = None
     for i in range(n - 2, max(0, n - 15), -1):
@@ -1283,7 +1274,7 @@ def detect_four_brick_system(klines: List[DailyData]) -> Dict:
     if current_color == 1 and count >= 4:
         result['brick_action'] = '减仓'
         if count == 4:
-            result['brick_action_desc'] = f'红砖已满4块，至少减仓一半'
+            result['brick_action_desc'] = '红砖已满4块，至少减仓一半'
         else:
             result['brick_action_desc'] = f'红砖已延续{count}块，趋势延续中，但未减仓需警惕'
         return result

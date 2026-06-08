@@ -39,7 +39,6 @@ class StockInfo:
     market: str = ""
 
 
-from contextlib import contextmanager
 
 # 模块首次 import 时由 modules/__init__.py 统一加载 .env，
 # 此处不再重复加载（保留仅为兼容独立脚本运行 `python modules/database.py`）

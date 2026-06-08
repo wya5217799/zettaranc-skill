@@ -5,7 +5,7 @@
 核心：建仓波 → 拉升波 → 冲刺波
 """
 
-from typing import List, Dict, Tuple, Optional
+from typing import List, Dict, Tuple
 
 from .core import DailyData
 

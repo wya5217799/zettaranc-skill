@@ -77,7 +77,7 @@ def match_strategy(indicators: Dict[str, Any]) -> Optional[StrategySignal]:
         return None
 
     # 匹配交易日期当天或前 5 天内的信号（给一定容错）
-    from datetime import datetime, timedelta
+    from datetime import datetime
     for fmt in ('%Y-%m-%d', '%Y%m%d'):
         try:
             td = datetime.strptime(trade_date, fmt)

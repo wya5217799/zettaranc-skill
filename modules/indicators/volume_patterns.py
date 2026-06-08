@@ -2,11 +2,10 @@
 量价模式检测模块
 """
 
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Tuple
 
 from .core import (
-    DailyData, TradeSignal, IndicatorResult,
-    calculate_ma, calculate_bbi, calculate_kdj, calculate_macd,
+    DailyData, TradeSignal, calculate_ma, calculate_bbi, calculate_kdj, calculate_macd,
 )
 from .price_patterns import detect_volume_pattern, detect_macd_signals
 
@@ -233,7 +232,6 @@ def detect_chuhuo_wushi(klines: List[DailyData]) -> Dict:
     recent_20 = klines[-20:]
     recent_10 = klines[-10:]
     recent_high = max(k.high for k in recent_20)
-    recent_low = min(k.low for k in recent_20)
 
     # 必须处于相对高位（当前 >= 近期高点 × 0.85）
     if today.close < recent_high * 0.85:

@@ -11,10 +11,9 @@ import logging
 from typing import Optional, List
 
 try:
-    import requests
     import pandas as pd
 except ImportError:
-    print("请先安装依赖: pip install requests pandas python-dotenv")
+    print("请先安装依赖: pip install pandas python-dotenv")
 
 try:
     import tushare as ts  # 可选后端（DATA_MODE=jnb）；免费模式无需安装

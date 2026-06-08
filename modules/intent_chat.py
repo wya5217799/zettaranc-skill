@@ -8,7 +8,6 @@
 """
 import os
 import sys
-from pathlib import Path
 
 # 清除代理
 for k in ['http_proxy', 'https_proxy', 'HTTP_PROXY', 'HTTPS_PROXY']:
@@ -94,7 +93,7 @@ def chat_once(router: IntentRouter, message: str, llm=None):
         if not result.system_prompt:
             print("[系统提示为空]")
             return
-        print(f"🤖 正在生成回复...")
+        print("🤖 正在生成回复...")
         reply = generate_reply(llm, result.system_prompt, message)
     
     print(f"\n{'='*60}")

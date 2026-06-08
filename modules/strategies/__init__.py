@@ -1,5 +1,4 @@
 from typing import List, Dict, Any, Optional, Tuple
-import sys
 
 from .core import (
     StrategyType, Priority, Action, StrategySignal, 

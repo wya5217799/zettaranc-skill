@@ -85,6 +85,7 @@ __all__ = [
     # volume patterns
     "calculate_sell_score", "detect_trade_signal",
     # data layer
+    "_indicator_memory_cache", "_load_indicator_cache", "_save_indicator_cache",
     "clear_indicator_memory_cache",
     "get_kline_data", "get_realtime_data",
     "analyze_stock", "visualize_brick_chart", "format_result",
