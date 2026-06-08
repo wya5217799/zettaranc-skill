@@ -45,6 +45,70 @@ def list_watch(tags: Optional[str] = None) -> List[Dict]:
     return get_watchlist(tags=tags)
 
 
+def _collect_signal_alerts(
+    ts_code: str, name: str, signals: List[Any], alerts: List[WatchAlert], summary: Dict[str, Any]
+) -> None:
+    """检查 B1/B2/逃顶 信号并写入 alerts / summary（前3个信号）。"""
+    for s in signals[:3]:
+        if s.strategy == StrategyType.B1 and s.action == "BUY":
+            alerts.append(WatchAlert(
+                ts_code=ts_code, name=name,
+                alert_type="B1", level="INFO",
+                message=f"出现B1买点 J={s.details.get('j', 0):.1f}",
+                data={"signal": s}
+            ))
+            summary["b1_count"] += 1
+        elif s.strategy == StrategyType.B2 and s.action == "BUY":
+            alerts.append(WatchAlert(
+                ts_code=ts_code, name=name,
+                alert_type="B2", level="INFO",
+                message=f"出现B2确认 涨{s.details.get('pct_chg', 0):.1f}%",
+                data={"signal": s}
+            ))
+            summary["b2_count"] += 1
+        elif s.strategy in (StrategyType.S1, StrategyType.S2, StrategyType.S3):
+            alerts.append(WatchAlert(
+                ts_code=ts_code, name=name,
+                alert_type="EXIT", level="CRITICAL",
+                message=f"{s.strategy.value}逃顶信号",
+                data={"signal": s}
+            ))
+            summary["exit_count"] += 1
+
+
+def _collect_indicator_alerts(
+    ts_code: str, name: str, ind: Any, alerts: List[WatchAlert], summary: Dict[str, Any]
+) -> None:
+    """检查破位/异动指标并写入 alerts / summary。"""
+    # 破位预警（破白线/黄线/BBI）
+    if ind.is_dead_cross:
+        alerts.append(WatchAlert(
+            ts_code=ts_code, name=name,
+            alert_type="BREAK", level="WARNING",
+            message="白线死叉黄线，趋势走坏",
+            data={"white": ind.zg_white, "yellow": ind.dg_yellow}
+        ))
+        summary["break_count"] += 1
+    elif ind.bbi > 0 and hasattr(ind, 'close') and ind.close < ind.bbi * 0.95:
+        alerts.append(WatchAlert(
+            ts_code=ts_code, name=name,
+            alert_type="BREAK", level="WARNING",
+            message="跌破BBI",
+            data={"bbi": ind.bbi}
+        ))
+        summary["break_count"] += 1
+
+    # 异动检测（量比 > 3 或涨跌幅 > 5%）
+    if ind.vol_ratio > 3 or (hasattr(ind, 'pct_chg') and abs(ind.pct_chg) > 5):
+        alerts.append(WatchAlert(
+            ts_code=ts_code, name=name,
+            alert_type="ABNORMAL", level="INFO",
+            message=f"异动 量比{ind.vol_ratio:.1f}",
+            data={"vol_ratio": ind.vol_ratio}
+        ))
+        summary["abnormal_count"] += 1
+
+
 def scan_watchlist(tags: Optional[str] = None) -> Dict[str, Any]:
     """
     批量扫描自选股池
@@ -53,8 +117,8 @@ def scan_watchlist(tags: Optional[str] = None) -> Dict[str, Any]:
         {"alerts": [...], "summary": {...}}
     """
     watches = get_watchlist(tags=tags)
-    alerts = []
-    summary = {
+    alerts: List[WatchAlert] = []
+    summary: Dict[str, Any] = {
         "total": len(watches),
         "b1_count": 0,
         "b2_count": 0,
@@ -79,60 +143,8 @@ def scan_watchlist(tags: Optional[str] = None) -> Dict[str, Any]:
         except Exception:
             signals = []
 
-        # 1. B1/B2 信号提醒
-        for s in signals[:3]:
-            if s.strategy == StrategyType.B1 and s.action == "BUY":
-                alerts.append(WatchAlert(
-                    ts_code=ts_code, name=name,
-                    alert_type="B1", level="INFO",
-                    message=f"出现B1买点 J={s.details.get('j', 0):.1f}",
-                    data={"signal": s}
-                ))
-                summary["b1_count"] += 1
-            elif s.strategy == StrategyType.B2 and s.action == "BUY":
-                alerts.append(WatchAlert(
-                    ts_code=ts_code, name=name,
-                    alert_type="B2", level="INFO",
-                    message=f"出现B2确认 涨{s.details.get('pct_chg', 0):.1f}%",
-                    data={"signal": s}
-                ))
-                summary["b2_count"] += 1
-            elif s.strategy in (StrategyType.S1, StrategyType.S2, StrategyType.S3):
-                alerts.append(WatchAlert(
-                    ts_code=ts_code, name=name,
-                    alert_type="EXIT", level="CRITICAL",
-                    message=f"{s.strategy.value}逃顶信号",
-                    data={"signal": s}
-                ))
-                summary["exit_count"] += 1
-
-        # 2. 破位预警（破白线/黄线/BBI）
-        if ind.is_dead_cross:
-            alerts.append(WatchAlert(
-                ts_code=ts_code, name=name,
-                alert_type="BREAK", level="WARNING",
-                message="白线死叉黄线，趋势走坏",
-                data={"white": ind.zg_white, "yellow": ind.dg_yellow}
-            ))
-            summary["break_count"] += 1
-        elif ind.bbi > 0 and hasattr(ind, 'close') and ind.close < ind.bbi * 0.95:
-            alerts.append(WatchAlert(
-                ts_code=ts_code, name=name,
-                alert_type="BREAK", level="WARNING",
-                message="跌破BBI",
-                data={"bbi": ind.bbi}
-            ))
-            summary["break_count"] += 1
-
-        # 3. 异动检测（量比 > 3 或涨跌幅 > 5%）
-        if ind.vol_ratio > 3 or (hasattr(ind, 'pct_chg') and abs(ind.pct_chg) > 5):
-            alerts.append(WatchAlert(
-                ts_code=ts_code, name=name,
-                alert_type="ABNORMAL", level="INFO",
-                message=f"异动 量比{ind.vol_ratio:.1f}",
-                data={"vol_ratio": ind.vol_ratio}
-            ))
-            summary["abnormal_count"] += 1
+        _collect_signal_alerts(ts_code, name, signals, alerts, summary)
+        _collect_indicator_alerts(ts_code, name, ind, alerts, summary)
 
     return {
         "alerts": alerts,
