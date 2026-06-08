@@ -72,6 +72,25 @@ def detect_divergence(klines: List[DailyData], dif_list: List[float]) -> Dict:
                 result['is_bottom_divergence'] = True
 
     return result
+def _count_recent_crosses(
+    dif_list: List[float],
+    dea_list: List[float],
+) -> Tuple[int, int]:
+    """统计最近3天内的金叉/死叉次数，供 detect_macd_signals 使用。"""
+    recent_gold = 0
+    recent_dead = 0
+    offset = len(dif_list) - len(dea_list)
+    for i in range(max(0, len(dif_list) - 4), len(dif_list) - 1):
+        dei = i - offset
+        if 0 <= dei < len(dea_list) and dei + 1 < len(dea_list):
+            prev_dei = dei - 1 if dei > 0 else 0
+            if dif_list[i] > dea_list[dei] and dif_list[i - 1] <= dea_list[prev_dei]:
+                recent_gold += 1
+            if dif_list[i] < dea_list[dei] and dif_list[i - 1] >= dea_list[prev_dei]:
+                recent_dead += 1
+    return recent_gold, recent_dead
+
+
 def detect_macd_signals(klines: List[DailyData], dif_list: List[float],
                         dea_list: List[float], macd_list: List[float]) -> Dict[str, Any]:
     """
@@ -118,17 +137,7 @@ def detect_macd_signals(klines: List[DailyData], dif_list: List[float],
 
     # === 用法 3: 金叉空 + 死叉多（多等一天）===
     if len(dif_list) >= 5 and len(dea_list) >= 3:
-        # 检查最近 3 天的金叉/死叉变化
-        recent_gold = 0
-        recent_dead = 0
-        for i in range(max(0, len(dif_list) - 4), len(dif_list) - 1):
-            di = i
-            dei = i - (len(dif_list) - len(dea_list))
-            if dei >= 0 and dei < len(dea_list) and dei + 1 < len(dea_list):
-                if dif_list[di] > dea_list[dei] and dif_list[di - 1] <= dea_list[dei - 1 if dei > 0 else 0]:
-                    recent_gold += 1
-                if dif_list[di] < dea_list[dei] and dif_list[di - 1] >= dea_list[dei - 1 if dei > 0 else 0]:
-                    recent_dead += 1
+        recent_gold, recent_dead = _count_recent_crosses(dif_list, dea_list)
 
         # 金叉空：刚金叉又马上死叉
         if signals['is_dead_cross'] and recent_gold >= 1:
@@ -278,6 +287,35 @@ def detect_needle_30(klines: List[DailyData]) -> bool:
     rsl_short = calculate_rsl(klines, 3)
     rsl_long = calculate_rsl(klines, 21)
     return rsl_long > 85 and rsl_short < 30
+def _find_fangliang_yang_idx(
+    klines: List[DailyData],
+    start: int,
+    stop: int,
+) -> Optional[int]:
+    """
+    在 klines[start..stop) 内从后往前找第一根放量阳线（量比>=1.8，涨幅>=3%）。
+    返回该根的索引，找不到返回 None。
+    """
+    for i in range(start, stop, -1):
+        if i > 0:
+            prev_vol = klines[i - 1].vol
+            vol_ratio = klines[i].vol / prev_vol if prev_vol > 0 else 0
+            if klines[i].pct_chg >= 3 and klines[i].close > klines[i].open and vol_ratio >= 1.8:
+                return i
+    return None
+
+
+def _avg_mid_vol_ratio(klines: List[DailyData], from_idx: int, to_idx: int) -> float:
+    """计算 klines[from_idx+1 .. to_idx) 各日相对前日的量比均值。"""
+    ratios = []
+    for i in range(from_idx + 1, to_idx):
+        if i > 0:
+            prev_vol = klines[i - 1].vol
+            if prev_vol > 0:
+                ratios.append(klines[i].vol / prev_vol)
+    return sum(ratios) / len(ratios) if ratios else 0.0
+
+
 def detect_double_gun(klines: List[DailyData]) -> Dict:
     """
     双枪战法检测
@@ -303,14 +341,7 @@ def detect_double_gun(klines: List[DailyData]) -> Dict:
     n = len(klines)
 
     # 往前找最近一根放量阳线（第二枪），排除今天
-    gun2_idx = None
-    for i in range(n - 2, max(0, n - 15), -1):
-        if i > 0:
-            prev_i = klines[i - 1]
-            vol_ratio = klines[i].vol / prev_i.vol if prev_i.vol > 0 else 0
-            if klines[i].pct_chg >= 3 and klines[i].close > klines[i].open and vol_ratio >= 1.8:
-                gun2_idx = i
-                break
+    gun2_idx = _find_fangliang_yang_idx(klines, n - 2, max(0, n - 15))
 
     if gun2_idx is None or gun2_idx < 5:
         return result
@@ -320,14 +351,7 @@ def detect_double_gun(klines: List[DailyData]) -> Dict:
     has_b1_before = j_before_gun2 < 20
 
     # 从第二枪往前找第一枪
-    gun1_idx = None
-    for i in range(gun2_idx - 3, max(0, gun2_idx - 12), -1):
-        if i > 0:
-            prev_i = klines[i - 1]
-            vol_ratio = klines[i].vol / prev_i.vol if prev_i.vol > 0 else 0
-            if klines[i].pct_chg >= 3 and klines[i].close > klines[i].open and vol_ratio >= 1.8:
-                gun1_idx = i
-                break
+    gun1_idx = _find_fangliang_yang_idx(klines, gun2_idx - 3, max(0, gun2_idx - 12))
 
     if gun1_idx is None:
         return result
@@ -335,17 +359,9 @@ def detect_double_gun(klines: List[DailyData]) -> Dict:
     gap_days = gun2_idx - gun1_idx
 
     # 检查中间是否缩量
-    mid_vols = []
-    for i in range(gun1_idx + 1, gun2_idx):
-        if i > 0:
-            prev_i = klines[i - 1]
-            if prev_i.vol > 0:
-                mid_vols.append(klines[i].vol / prev_i.vol)
-
-    if not mid_vols:
+    avg_mid_vol = _avg_mid_vol_ratio(klines, gun1_idx, gun2_idx)
+    if avg_mid_vol == 0.0:
         return result
-
-    avg_mid_vol = sum(mid_vols) / len(mid_vols)
     is_shrink_mid = avg_mid_vol < 1.2  # 中间平均量比 < 1.2
 
     # 计算两枪的量比
@@ -361,6 +377,41 @@ def detect_double_gun(klines: List[DailyData]) -> Dict:
         result['double_gun_gap_days'] = gap_days
 
     return result
+def _find_big_drop_idx(klines: List[DailyData], start: int, stop: int) -> Optional[int]:
+    """
+    在 klines[start..stop) 内从后往前找放量大阴线（跌幅>3%，量比>=1.5，收阴）。
+    返回该根的索引，找不到返回 None。
+    """
+    for i in range(start, stop, -1):
+        if i > 0:
+            prev_vol = klines[i - 1].vol
+            vol_ratio = klines[i].vol / prev_vol if prev_vol > 0 else 0
+            if klines[i].pct_chg <= -3 and vol_ratio >= 1.5 and klines[i].close < klines[i].open:
+                return i
+    return None
+
+
+def _has_shrink_after_drop(klines: List[DailyData], drop_idx: int) -> bool:
+    """检查 drop_idx 后至末尾每根K线量是否均 < drop_idx 量的 70%。"""
+    drop_vol = klines[drop_idx].vol
+    for i in range(drop_idx + 1, len(klines)):
+        if klines[i].vol > drop_vol * 0.7:
+            return False
+    return True
+
+
+def _is_n_type_structure(klines: List[DailyData], before_idx: int) -> bool:
+    """判断 before_idx 前的低点是否呈 N 型抬高结构。"""
+    if before_idx < 5:
+        return False
+    pre_lows = [klines[i].low for i in range(max(0, before_idx - 10), before_idx)]
+    if len(pre_lows) < 3:
+        return False
+    first_half = pre_lows[:len(pre_lows) // 2]
+    second_half = pre_lows[len(pre_lows) // 2:]
+    return min(second_half) < min(first_half)
+
+
 def detect_sb1_detailed(klines: List[DailyData]) -> Dict:
     """
     超级B1独立检测
@@ -382,15 +433,7 @@ def detect_sb1_detailed(klines: List[DailyData]) -> Dict:
     _, _, j_today = calculate_kdj(klines)
 
     # 往前找放量大阴线（击穿止损位）
-    big_drop_idx = None
-    for i in range(n - 2, max(0, n - 10), -1):
-        if i > 0:
-            prev_i = klines[i - 1]
-            vol_ratio = klines[i].vol / prev_i.vol if prev_i.vol > 0 else 0
-            # 放量大阴线：跌幅>3%, 量比>1.5, 收阴
-            if klines[i].pct_chg <= -3 and vol_ratio >= 1.5 and klines[i].close < klines[i].open:
-                big_drop_idx = i
-                break
+    big_drop_idx = _find_big_drop_idx(klines, n - 2, max(0, n - 10))
 
     if big_drop_idx is None:
         return result
@@ -401,10 +444,8 @@ def detect_sb1_detailed(klines: List[DailyData]) -> Dict:
         return result
 
     # 检查大阴线后是否缩量
-    drop_vol = klines[big_drop_idx].vol
-    for i in range(big_drop_idx + 1, n):
-        if klines[i].vol > drop_vol * 0.7:
-            return result  # 没有缩量
+    if not _has_shrink_after_drop(klines, big_drop_idx):
+        return result  # 没有缩量
 
     # J值大负值
     if j_today > -5:
@@ -420,16 +461,50 @@ def detect_sb1_detailed(klines: List[DailyData]) -> Dict:
         return result
 
     # 检查大阴线前是否有N型上涨结构
-    if big_drop_idx >= 5:
-        pre_lows = [klines[i].low for i in range(max(0, big_drop_idx - 10), big_drop_idx)]
-        if len(pre_lows) >= 3:
-            # 简单判断：大阴线前的低点在抬高
-            first_half = pre_lows[:len(pre_lows)//2]
-            second_half = pre_lows[len(pre_lows)//2:]
-            if min(second_half) < min(first_half):
-                result['is_sb1_detailed'] = True
+    if _is_n_type_structure(klines, big_drop_idx):
+        result['is_sb1_detailed'] = True
 
     return result
+def _build_dm_tr_series(
+    klines: List[DailyData],
+) -> Tuple[List[float], List[float], List[float]]:
+    """
+    单次遍历计算 DMI+ 列表、DMI- 列表、TR 列表。
+    供 calculate_dmi 使用。
+    """
+    dm_plus_list: List[float] = []
+    dm_minus_list: List[float] = []
+    tr_list: List[float] = []
+    for i in range(1, len(klines)):
+        high_diff = klines[i].high - klines[i - 1].high
+        low_diff = klines[i - 1].low - klines[i].low
+        dm_plus_list.append(high_diff if high_diff > low_diff and high_diff > 0 else 0)
+        dm_minus_list.append(low_diff if low_diff > high_diff and low_diff > 0 else 0)
+        high = klines[i].high
+        low = klines[i].low
+        prev_close = klines[i - 1].close
+        tr_list.append(max(high - low, abs(high - prev_close), abs(low - prev_close)))
+    return dm_plus_list, dm_minus_list, tr_list
+
+
+def _calc_adx(
+    dm_plus_list: List[float],
+    dm_minus_list: List[float],
+    tr_ma: float,
+    period: int,
+) -> float:
+    """根据 DM 序列和 TR 均值计算 ADX 值。"""
+    dx_list = []
+    for i in range(period - 1, len(dm_plus_list)):
+        di_plus = sum(dm_plus_list[i - period + 1:i + 1]) / period / tr_ma * 100 if tr_ma > 0 else 0
+        di_minus = sum(dm_minus_list[i - period + 1:i + 1]) / period / tr_ma * 100 if tr_ma > 0 else 0
+        dx = abs(di_plus - di_minus) / (di_plus + di_minus) * 100 if (di_plus + di_minus) > 0 else 0
+        dx_list.append(dx)
+    if not dx_list:
+        return 0.0
+    return sum(dx_list[-period:]) / period if len(dx_list) >= period else sum(dx_list) / len(dx_list)
+
+
 def calculate_dmi(klines: List[DailyData], period: int = 14) -> Tuple[float, float, float]:
     """
     计算 DMI 趋向指标
@@ -448,52 +523,13 @@ def calculate_dmi(klines: List[DailyData], period: int = 14) -> Tuple[float, flo
     if len(klines) < period + 1:
         return 0, 0, 0
 
-    # 计算 MTM = 当日收盘 - 昨日收盘
-    mtm_list = []
-    for i in range(1, len(klines)):
-        mtm = klines[i].close - klines[i-1].close
-        mtm_list.append(mtm)
+    dm_plus_list, dm_minus_list, tr_list = _build_dm_tr_series(klines)
 
-    if len(mtm_list) < period:
+    if len(dm_plus_list) < period or len(tr_list) < period:
         return 0, 0, 0
 
-    # 计算 DMI+ 和 DMI-
-    dmi_plus_list = []
-    dmi_minus_list = []
-
-    for i in range(1, len(klines)):
-        high_diff = klines[i].high - klines[i-1].high
-        low_diff = klines[i-1].low - klines[i].low
-
-        dm_plus = high_diff if high_diff > low_diff and high_diff > 0 else 0
-        dm_minus = low_diff if low_diff > high_diff and low_diff > 0 else 0
-
-        dmi_plus_list.append(dm_plus)
-        dmi_minus_list.append(dm_minus)
-
-    # 计算 N 日简单移动平均
-    if len(dmi_plus_list) < period:
-        return 0, 0, 0
-
-    dm_plus_ma = sum(dmi_plus_list[-period:]) / period
-    dm_minus_ma = sum(dmi_minus_list[-period:]) / period
-
-    # 计算 TR (True Range)
-    tr_list = []
-    for i in range(1, len(klines)):
-        high = klines[i].high
-        low = klines[i].low
-        prev_close = klines[i-1].close
-
-        tr1 = high - low
-        tr2 = abs(high - prev_close)
-        tr3 = abs(low - prev_close)
-        tr = max(tr1, tr2, tr3)
-        tr_list.append(tr)
-
-    if len(tr_list) < period:
-        return 0, 0, 0
-
+    dm_plus_ma = sum(dm_plus_list[-period:]) / period
+    dm_minus_ma = sum(dm_minus_list[-period:]) / period
     tr_ma = sum(tr_list[-period:]) / period
 
     if tr_ma == 0:
@@ -502,18 +538,7 @@ def calculate_dmi(klines: List[DailyData], period: int = 14) -> Tuple[float, flo
     dmi_plus = dm_plus_ma / tr_ma * 100
     dmi_minus = dm_minus_ma / tr_ma * 100
 
-    # 计算 ADX
-    dx_list = []
-    for i in range(period - 1, len(dmi_plus_list)):
-        di_plus = sum(dmi_plus_list[i-period+1:i+1]) / period / tr_ma * 100 if tr_ma > 0 else 0
-        di_minus = sum(dmi_minus_list[i-period+1:i+1]) / period / tr_ma * 100 if tr_ma > 0 else 0
-        dx = abs(di_plus - di_minus) / (di_plus + di_minus) * 100 if (di_plus + di_minus) > 0 else 0
-        dx_list.append(dx)
-
-    if len(dx_list) < period:
-        adx = sum(dx_list) / len(dx_list) if dx_list else 0
-    else:
-        adx = sum(dx_list[-period:]) / period
+    adx = _calc_adx(dm_plus_list, dm_minus_list, tr_ma, period)
 
     return round(dmi_plus, 2), round(dmi_minus, 2), round(adx, 2)
 def calculate_brick_value(klines: List[DailyData]) -> float:
@@ -1108,6 +1133,18 @@ def detect_golden_bowl(klines: List[DailyData]) -> Dict:
     if white > yellow and yellow <= today_close <= white:
         result['is_in_bowl'] = True
     return result
+def _classify_vol_price_phase(day: DailyData, prev: DailyData) -> str:
+    """将单根K线分类为 'exhale'（放量涨）/ 'inhale'（缩量跌）/ 'other'。"""
+    if prev.vol <= 0:
+        return 'other'
+    vol_ratio = day.vol / prev.vol
+    if day.pct_chg > 0 and vol_ratio > 1:
+        return 'exhale'  # 放量涨=呼气
+    if day.pct_chg < 0 and vol_ratio < 1:
+        return 'inhale'  # 缩量跌=吸气
+    return 'other'
+
+
 def detect_breathing_structure(klines: List[DailyData]) -> Dict:
     """
     呼吸结构检测：放量涨->缩量跌->放量涨 的N型节奏
@@ -1118,29 +1155,18 @@ def detect_breathing_structure(klines: List[DailyData]) -> Dict:
     n = len(klines)
     # 分析最近5-7天的量价节奏
     phases = []
-    for i in range(max(0, n-7), n):
-        day = klines[i]
-        prev = klines[i-1] if i > 0 else None
-        if not prev or prev.vol <= 0:
+    for i in range(max(0, n - 7), n):
+        prev = klines[i - 1] if i > 0 else None
+        if not prev:
             continue
-        vol_ratio = day.vol / prev.vol
-        if day.pct_chg > 0 and vol_ratio > 1:
-            phases.append('exhale')  # 放量涨=呼气
-        elif day.pct_chg < 0 and vol_ratio < 1:
-            phases.append('inhale')  # 缩量跌=吸气
-        else:
-            phases.append('other')
+        phases.append(_classify_vol_price_phase(klines[i], prev))
     # 判断当前阶段
     if len(phases) >= 2:
-        if phases[-1] == 'exhale':
-            result['breath_phase'] = 'exhale'
-        elif phases[-1] == 'inhale':
-            result['breath_phase'] = 'inhale'
-        else:
-            result['breath_phase'] = 'none'
+        last = phases[-1]
+        result['breath_phase'] = last if last in ('exhale', 'inhale') else 'none'
     # N型结构：最近3个低点依次抬高
     if n >= 10:
-        lows = [klines[i].low for i in range(n-10, n, 3)]
+        lows = [klines[i].low for i in range(n - 10, n, 3)]
         if len(lows) >= 3 and lows[-1] > lows[-2] > lows[-3]:
             result['breath_n_type'] = True
     return result
@@ -1195,6 +1221,55 @@ def detect_b3(klines: List[DailyData]) -> Dict:
         if today_vol_ratio < 0.8 and not_break_low and small_candle:
             result['is_b3'] = True
     return result
+def _build_brick_colors(brick_history: List[float]) -> List[int]:
+    """将砖值序列转为红绿砖颜色列表：1=红砖(上涨)，-1=绿砖(下跌)。"""
+    colors = []
+    for i in range(1, len(brick_history)):
+        colors.append(1 if brick_history[i] >= brick_history[i - 1] else -1)
+    return colors
+
+
+def _count_consecutive_bricks(colors: List[int]) -> Tuple[int, int]:
+    """返回 (current_color, 从最新往前连续同色砖数)。"""
+    current_color = colors[-1]
+    count = 1
+    for i in range(len(colors) - 2, -1, -1):
+        if colors[i] == current_color:
+            count += 1
+        else:
+            break
+    return current_color, count
+
+
+def _resolve_brick_action(colors: List[int], current_color: int, count: int) -> Tuple[bool, str, str]:
+    """
+    根据砖色和连续数返回 (is_flip_green, brick_action, brick_action_desc)。
+    """
+    # 1. 红砖翻绿（止损信号）
+    if current_color == -1 and len(colors) >= 2 and colors[-2] == 1:
+        return (
+            True,
+            '止损',
+            f'红砖翻绿！立刻止损（连续红砖{count}块后翻绿）',
+        )
+    # 2. 红砖满4块 → 减仓
+    if current_color == 1 and count >= 4:
+        desc = '红砖已满4块，至少减仓一半' if count == 4 else f'红砖已延续{count}块，趋势延续中，但未减仓需警惕'
+        return False, '减仓', desc
+    # 3. 绿砖下跌 → 禁止抄底
+    if current_color == -1:
+        desc = (
+            f'绿砖已连续{count}块，跌势可能接近尾声但仍禁止抄底'
+            if count >= 4 else
+            f'绿砖下跌中（{count}块），绝不抄底，先数4块'
+        )
+        return False, '禁止抄底', desc
+    # 4. 红砖不足4块 → 持有
+    if current_color == 1 and count < 4:
+        return False, '持有', f'红砖上涨中（{count}块），继续持有'
+    return False, '观望', '中性'
+
+
 def detect_four_brick_system(klines: List[DailyData]) -> Dict:
     """
     四块砖交易体系检测
@@ -1223,76 +1298,28 @@ def detect_four_brick_system(klines: List[DailyData]) -> Dict:
     # 计算历史砖值序列（至少需要8天才能开始算砖值）
     brick_history = []
     for i in range(8, len(klines) + 1):
-        sub_klines = klines[:i]
-        brick_val = calculate_brick_value(sub_klines)
-        brick_history.append(brick_val)
+        brick_history.append(calculate_brick_value(klines[:i]))
 
     if len(brick_history) < 3:
         result['brick_action_desc'] = '数据不足'
         return result
 
-    # 计算红绿砖：与官方公式一致
-    # 1=红砖(上涨), -1=绿砖(下跌)
-    colors = []
-    for i in range(1, len(brick_history)):
-        if brick_history[i] >= brick_history[i - 1]:
-            colors.append(1)   # 红砖 = 上涨
-        else:
-            colors.append(-1)  # 绿砖 = 下跌
+    # 计算红绿砖颜色序列
+    colors = _build_brick_colors(brick_history)
 
     if not colors:
         result['brick_action_desc'] = '无砖型数据'
         return result
 
     # 从最新往前数连续同色砖
-    current_color = colors[-1]
-    count = 1
-    for i in range(len(colors) - 2, -1, -1):
-        if colors[i] == current_color:
-            count += 1
-        else:
-            break
-
+    current_color, count = _count_consecutive_bricks(colors)
     result['brick_consecutive'] = count
 
-    # === 规则判断 ===
-
-    # 1. 红砖翻绿（止损信号）- 上涨转下跌
-    if current_color == -1 and len(colors) >= 2:
-        prev_color = colors[-2] if len(colors) >= 2 else 1
-        if prev_color == 1:
-            # 刚翻绿
-            result['is_brick_flip_green'] = True
-            result['brick_action'] = '止损'
-            result['brick_action_desc'] = f'红砖翻绿！立刻止损（连续红砖{count}块后翻绿）'
-            return result
-
-    # 2. 红砖数满4块 → 减仓（连续上涨）
-    if current_color == 1 and count >= 4:
-        result['brick_action'] = '减仓'
-        if count == 4:
-            result['brick_action_desc'] = '红砖已满4块，至少减仓一半'
-        else:
-            result['brick_action_desc'] = f'红砖已延续{count}块，趋势延续中，但未减仓需警惕'
-        return result
-
-    # 3. 绿砖下跌 → 禁止抄底（连续下跌）
-    if current_color == -1:
-        result['brick_action'] = '禁止抄底'
-        if count >= 4:
-            result['brick_action_desc'] = f'绿砖已连续{count}块，跌势可能接近尾声但仍禁止抄底'
-        else:
-            result['brick_action_desc'] = f'绿砖下跌中（{count}块），绝不抄底，先数4块'
-        return result
-
-    # 4. 红砖不足4块 → 持有/观察（上涨中）
-    if current_color == 1 and count < 4:
-        result['brick_action'] = '持有'
-        result['brick_action_desc'] = f'红砖上涨中（{count}块），继续持有'
-        return result
-
-    result['brick_action'] = '观望'
-    result['brick_action_desc'] = '中性'
+    # 规则判断 → 操作建议
+    is_flip, action, desc = _resolve_brick_action(colors, current_color, count)
+    result['is_brick_flip_green'] = is_flip
+    result['brick_action'] = action
+    result['brick_action_desc'] = desc
     return result
 
 
