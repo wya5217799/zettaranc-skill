@@ -217,8 +217,11 @@ def detect_yidong_dilian(klines: List[Dict], index: int) -> Optional[StrategySig
     if days_after < 2:
         return None
 
-    # 回调期间应该有缩量
-    has_suoliang = any(klines[j]['is_suoliang'] for j in range(yidong_index+1, index+1))
+    # 回调期间（不含今日）应有缩量——此前该条件计算了却从未作为门槛，
+    # 且原 range 含今日使其恒为真；放量杀跌的回调本不该误报买点
+    has_suoliang = any(klines[j]['is_suoliang'] for j in range(yidong_index + 1, index))
+    if not has_suoliang:
+        return None
 
     # 今日地量（最佳买点）
     if not today['is_suoliang']:
