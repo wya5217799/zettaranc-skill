@@ -47,64 +47,70 @@ class ReviewContext:
         if self.tags is None:
             self.tags = []
 
-    def to_llm_prompt(self) -> str:
-        """转换为给 LLM 的提示词"""
-        parts = ["【交易记录】"]
-
-        # 基础信息
+    def _build_basic_info_lines(self) -> List[str]:
+        """构建基础交易信息行"""
         action_text = "买入" if self.action == "BUY" else "卖出"
-        parts.append(f"股票: {self.name} ({self.ts_code})")
-        parts.append(f"日期: {self.trade_date}")
-        parts.append(f"操作: {action_text}")
-        parts.append(f"价格: {self.price}元")
-        parts.append(f"数量: {self.quantity}股")
-        parts.append(f"金额: {self.amount}元")
-        parts.append(f"原因: {self.reason}")
-
+        lines: List[str] = [
+            f"股票: {self.name} ({self.ts_code})",
+            f"日期: {self.trade_date}",
+            f"操作: {action_text}",
+            f"价格: {self.price}元",
+            f"数量: {self.quantity}股",
+            f"金额: {self.amount}元",
+            f"原因: {self.reason}",
+        ]
         # 盈亏（如果是卖出）
         if self.action == "SELL" and self.profit_pct is not None:
             if self.profit_pct >= 0:
-                parts.append(f"收益: 盈利{self.profit_pct:.1f}%")
+                lines.append(f"收益: 盈利{self.profit_pct:.1f}%")
             else:
-                parts.append(f"收益: 亏损{abs(self.profit_pct):.1f}%")
-
+                lines.append(f"收益: 亏损{abs(self.profit_pct):.1f}%")
         # 持仓天数
         if self.holding_days is not None:
-            parts.append(f"持仓天数: {self.holding_days}天")
-
+            lines.append(f"持仓天数: {self.holding_days}天")
         # 信号类型
         if self.signal_type:
-            parts.append(f"信号类型: {self.signal_type}")
+            lines.append(f"信号类型: {self.signal_type}")
+        return lines
 
-        # 指标数据
-        if self.indicators:
-            ind = self.indicators
-            parts.append("")
-            parts.append("【当时技术指标】")
-            if 'j' in ind and ind['j']:
-                parts.append(f"J值: {ind['j']:.1f}")
-            if 'k' in ind and ind['k']:
-                parts.append(f"KDJ: K={ind['k']:.1f} D={ind['d']:.1f}")
-            if 'bbi' in ind and ind['bbi']:
-                parts.append(f"BBI: {ind['bbi']:.2f}")
-            if 'signal' in ind:
-                parts.append(f"信号: {ind['signal']}")
-            if 'sell_score' in ind:
-                parts.append(f"防卖飞评分: {ind['sell_score']}/5")
+    def _build_indicators_lines(self) -> List[str]:
+        """构建技术指标信息行（若无指标则返回空列表）"""
+        if not self.indicators:
+            return []
+        ind = self.indicators
+        lines: List[str] = ["", "【当时技术指标】"]
+        if 'j' in ind and ind['j']:
+            lines.append(f"J值: {ind['j']:.1f}")
+        if 'k' in ind and ind['k']:
+            lines.append(f"KDJ: K={ind['k']:.1f} D={ind['d']:.1f}")
+        if 'bbi' in ind and ind['bbi']:
+            lines.append(f"BBI: {ind['bbi']:.2f}")
+        if 'signal' in ind:
+            lines.append(f"信号: {ind['signal']}")
+        if 'sell_score' in ind:
+            lines.append(f"防卖飞评分: {ind['sell_score']}/5")
+        return lines
 
-        # 完整交易信息
-        if self.is_complete_trade:
-            parts.append("")
-            parts.append("【这是完整的一笔交易】")
-            if self.matched_buy:
-                parts.append(f"买入价: {self.matched_buy.get('price')}元")
-            if self.matched_sell:
-                parts.append(f"卖出价: {self.matched_sell.get('price')}元")
+    def _build_complete_trade_lines(self) -> List[str]:
+        """构建完整交易信息行（若非完整交易则返回空列表）"""
+        if not self.is_complete_trade:
+            return []
+        lines: List[str] = ["", "【这是完整的一笔交易】"]
+        if self.matched_buy:
+            lines.append(f"买入价: {self.matched_buy.get('price')}元")
+        if self.matched_sell:
+            lines.append(f"卖出价: {self.matched_sell.get('price')}元")
+        return lines
 
+    def to_llm_prompt(self) -> str:
+        """转换为给 LLM 的提示词"""
+        parts = ["【交易记录】"]
+        parts.extend(self._build_basic_info_lines())
+        parts.extend(self._build_indicators_lines())
+        parts.extend(self._build_complete_trade_lines())
         # 标签
         if self.tags:
             parts.append(f"标签: {', '.join(self.tags)}")
-
         return "\n".join(parts)
 
     def get_full_prompt(self) -> str:
