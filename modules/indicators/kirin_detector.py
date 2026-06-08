@@ -161,6 +161,153 @@ def _count_limit_up(klines: List[DailyData], days: int = 20) -> int:
     return sum(1 for k in segment if k.pct_chg >= 9.9)
 
 
+def _describe_price_position(from_low_pct: float) -> str:
+    """价格位置描述：低位 / 中位 / 高位"""
+    if from_low_pct < 30:
+        return '低位'
+    if from_low_pct > 70:
+        return '高位'
+    return '中位'
+
+
+def _describe_vol_pattern(is_high_vol: bool, is_low_vol: bool) -> str:
+    """成交量描述：放量 / 缩量 / 正常"""
+    if is_high_vol:
+        return '放量'
+    if is_low_vol:
+        return '缩量'
+    return '正常'
+
+
+def _score_xishou(from_low_pct: float, is_high_vol: bool, n_shape: bool,
+                  red_green: float, has_limit_up: bool) -> int:
+    """吸筹阶段评分（0-100）"""
+    score = 0
+    # 低位：从低点涨 < 30%
+    if from_low_pct < 30:
+        score += 30
+    elif from_low_pct < 50:
+        score += 15
+    # 放量
+    if is_high_vol:
+        score += 20
+    # N 型抬高
+    if n_shape:
+        score += 20
+    # 红肥绿瘦
+    if red_green > 1.3:
+        score += 20
+    elif red_green > 1.0:
+        score += 10
+    # 无涨停（吸筹期一般不拉涨停）
+    if not has_limit_up:
+        score += 10
+    return score
+
+
+def _score_lasheng(from_low_pct: float, pull_speed: float, limit_up_count: int,
+                   has_limit_up: bool, vol_price_rise: bool, white_above: bool,
+                   breathing: bool) -> int:
+    """拉升阶段评分（0-100）"""
+    score = 0
+    # 已从低位涨起来
+    if from_low_pct > 30:
+        score += 20
+    elif from_low_pct > 20:
+        score += 10
+    # 涨速快
+    if pull_speed > 30:
+        score += 25
+    elif pull_speed > 20:
+        score += 15
+    # 有涨停
+    if limit_up_count >= 2:
+        score += 20
+    elif has_limit_up:
+        score += 10
+    # 量价齐升
+    if vol_price_rise:
+        score += 15
+    # 白线在黄线之上
+    if white_above:
+        score += 10
+    # 呼吸节奏健康
+    if breathing:
+        score += 10
+    return score
+
+
+def _score_paifa(from_high_pct: float, is_high_vol: bool, from_low_pct: float,
+                 red_green: float, klines: List[DailyData]) -> int:
+    """派发阶段评分（0-100）"""
+    score = 0
+    # 高位
+    if from_high_pct < 15:
+        score += 30
+    elif from_high_pct < 30:
+        score += 15
+    # 高位放量
+    if is_high_vol and from_low_pct > 60:
+        score += 20
+    # 绿肥红瘦
+    if red_green < 0.7:
+        score += 20
+    elif red_green < 1.0:
+        score += 10
+    # 出货信号
+    try:
+        chuhuo = detect_chuhuo_wushi(klines)
+        if chuhuo.get('total_score', 0) >= 2:
+            score += 30
+    except Exception:
+        pass
+    return score
+
+
+def _score_luoluo(from_high_pct: float, is_low_vol: bool, klines: List[DailyData],
+                  white_above: bool, has_limit_up: bool) -> int:
+    """回落阶段评分（0-100）"""
+    score = 0
+    # 从高点跌下来
+    if from_high_pct > 20:
+        score += 30
+    elif from_high_pct > 10:
+        score += 15
+    # 缩量
+    if is_low_vol:
+        score += 25
+    # 无承接（阳线少）
+    recent_red = sum(1 for k in klines[-10:] if k.close > k.open)
+    if recent_red < 3:
+        score += 20
+    # 白线跌破黄线
+    if not white_above:
+        score += 15
+    # 无涨停
+    if not has_limit_up:
+        score += 10
+    return score
+
+
+def _determine_kirin_sub_type(stage: str, pull_speed: float, breathing: bool,
+                              klines: List[DailyData]) -> str:
+    """子类型：铁蝴蝶（传统庄）/ 学院派铁蝴蝶（机构）/ 未知"""
+    if stage == '拉升':
+        # 拉升快、洗盘狠 = 铁蝴蝶；拉升慢而稳 = 学院派
+        if pull_speed > 40:
+            return '铁蝴蝶'
+        if pull_speed < 25 and breathing:
+            return '学院派铁蝴蝶'
+        return '铁蝴蝶'
+    if stage == '派发':
+        # A 杀快 = 铁蝴蝶，多重顶 = 学院派；简化：看下跌速度
+        recent_drop = (klines[-1].close / klines[-5].close - 1) * 100 if len(klines) >= 5 else 0
+        if recent_drop < -15:
+            return '铁蝴蝶'
+        return '学院派铁蝴蝶'
+    return '未知'
+
+
 def detect_kirin_stage(klines: List[DailyData]) -> Dict:
     """
     识别麒麟会（庄家）当前所处阶段
@@ -223,27 +370,12 @@ def detect_kirin_stage(klines: List[DailyData]) -> Dict:
     is_high_vol = recent_avg_vol > avg_vol_60 * 1.3 if avg_vol_60 > 0 else False
     is_low_vol = recent_avg_vol < avg_vol_60 * 0.8 if avg_vol_60 > 0 else False
 
-    # 价格位置描述
     from_low_pct = position['from_low_pct']
     from_high_pct = position['from_high_pct']
-    if from_low_pct < 30:
-        price_pos = '低位'
-    elif from_low_pct > 70:
-        price_pos = '高位'
-    else:
-        price_pos = '中位'
 
-    # 成交量描述
-    if is_high_vol:
-        vol_pattern = '放量'
-    elif is_low_vol:
-        vol_pattern = '缩量'
-    else:
-        vol_pattern = '正常'
-
-    indicators = {
-        'price_position': price_pos,
-        'vol_pattern': vol_pattern,
+    result['indicators'] = {
+        'price_position': _describe_price_position(from_low_pct),
+        'vol_pattern': _describe_vol_pattern(is_high_vol, is_low_vol),
         'red_green_ratio': round(red_green, 2),
         'n_shape': n_shape,
         'healthy_breathing': breathing,
@@ -253,106 +385,13 @@ def detect_kirin_stage(klines: List[DailyData]) -> Dict:
         'from_low_pct': round(from_low_pct, 1),
         'from_high_pct': round(from_high_pct, 1),
     }
-    result['indicators'] = indicators
-
-    # ========== 吸筹阶段评分 ==========
-    xishou_score = 0
-    # 低位：从低点涨 < 30%
-    if from_low_pct < 30:
-        xishou_score += 30
-    elif from_low_pct < 50:
-        xishou_score += 15
-    # 放量
-    if is_high_vol:
-        xishou_score += 20
-    # N 型抬高
-    if n_shape:
-        xishou_score += 20
-    # 红肥绿瘦
-    if red_green > 1.3:
-        xishou_score += 20
-    elif red_green > 1.0:
-        xishou_score += 10
-    # 无涨停（吸筹期一般不拉涨停）
-    if not has_limit_up:
-        xishou_score += 10
-
-    # ========== 拉升阶段评分 ==========
-    lasheng_score = 0
-    # 已从低位涨起来
-    if from_low_pct > 30:
-        lasheng_score += 20
-    elif from_low_pct > 20:
-        lasheng_score += 10
-    # 涨速快
-    if pull_speed > 30:
-        lasheng_score += 25
-    elif pull_speed > 20:
-        lasheng_score += 15
-    # 有涨停
-    if limit_up_count >= 2:
-        lasheng_score += 20
-    elif has_limit_up:
-        lasheng_score += 10
-    # 量价齐升
-    if vol_price_rise:
-        lasheng_score += 15
-    # 白线在黄线之上
-    if white_above:
-        lasheng_score += 10
-    # 呼吸节奏健康
-    if breathing:
-        lasheng_score += 10
-
-    # ========== 派发阶段评分 ==========
-    paifa_score = 0
-    # 高位
-    if from_high_pct < 15:
-        paifa_score += 30
-    elif from_high_pct < 30:
-        paifa_score += 15
-    # 高位放量
-    if is_high_vol and from_low_pct > 60:
-        paifa_score += 20
-    # 绿肥红瘦
-    if red_green < 0.7:
-        paifa_score += 20
-    elif red_green < 1.0:
-        paifa_score += 10
-    # 出货信号
-    try:
-        chuhuo = detect_chuhuo_wushi(klines)
-        if chuhuo.get('total_score', 0) >= 2:
-            paifa_score += 30
-    except Exception:
-        pass
-
-    # ========== 回落阶段评分 ==========
-    luoluo_score = 0
-    # 从高点跌下来
-    if from_high_pct > 20:
-        luoluo_score += 30
-    elif from_high_pct > 10:
-        luoluo_score += 15
-    # 缩量
-    if is_low_vol:
-        luoluo_score += 25
-    # 无承接（阳线少）
-    recent_red = sum(1 for k in klines[-10:] if k.close > k.open)
-    if recent_red < 3:
-        luoluo_score += 20
-    # 白线跌破黄线
-    if not white_above:
-        luoluo_score += 15
-    # 无涨停
-    if not has_limit_up:
-        luoluo_score += 10
 
     scores = {
-        'xishou': xishou_score,
-        'lasheng': lasheng_score,
-        'paifa': paifa_score,
-        'luoluo': luoluo_score,
+        'xishou': _score_xishou(from_low_pct, is_high_vol, n_shape, red_green, has_limit_up),
+        'lasheng': _score_lasheng(from_low_pct, pull_speed, limit_up_count, has_limit_up,
+                                  vol_price_rise, white_above, breathing),
+        'paifa': _score_paifa(from_high_pct, is_high_vol, from_low_pct, red_green, klines),
+        'luoluo': _score_luoluo(from_high_pct, is_low_vol, klines, white_above, has_limit_up),
     }
     result['scores'] = scores
 
@@ -376,25 +415,7 @@ def detect_kirin_stage(klines: List[DailyData]) -> Dict:
     result['confidence'] = round(min(max_score / 100, 1.0), 2)
     result['operation'] = stage_map[max_stage][1]
 
-    # ========== 子类型判断 ==========
-    # 铁蝴蝶 vs 学院派铁蝴蝶
-    if result['stage'] == '拉升':
-        # 拉升快、洗盘狠 = 铁蝴蝶
-        # 拉升慢而稳 = 学院派
-        if pull_speed > 40:
-            result['sub_type'] = '铁蝴蝶'
-        elif pull_speed < 25 and breathing:
-            result['sub_type'] = '学院派铁蝴蝶'
-        else:
-            result['sub_type'] = '铁蝴蝶'
-    elif result['stage'] == '派发':
-        # A 杀快 = 铁蝴蝶，多重顶 = 学院派
-        # 简化：看下跌速度
-        recent_drop = (klines[-1].close / klines[-5].close - 1) * 100 if len(klines) >= 5 else 0
-        if recent_drop < -15:
-            result['sub_type'] = '铁蝴蝶'
-        else:
-            result['sub_type'] = '学院派铁蝴蝶'
+    result['sub_type'] = _determine_kirin_sub_type(result['stage'], pull_speed, breathing, klines)
 
     return result
 
